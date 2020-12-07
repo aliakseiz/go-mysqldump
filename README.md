@@ -1,5 +1,9 @@
 # Go MySQL dump
 
+[![License][License-Image]][License-Url]
+[![Godoc][Godoc-Image]][Godoc-Url]
+[![ReportCard][ReportCard-Image]][ReportCard-Url]
+
 Create MySQL dumps without `mysqldump` dependency.
 
 Fork from JamesStewy/go-mysqldump. Includes pull request JamesStewy/go-mysqldump#14.
@@ -62,5 +66,13 @@ func main() {
 
 ```
 
-[![GoDoc](https://godoc.org/github.com/aliakseiz/go-mysqldump?status.svg)](https://godoc.org/github.com/aliakseiz/go-mysqldump)
-[![Build Status](https://travis-ci.org/aliakseiz/go-mysqldump.svg?branch=master)](https://travis-ci.org/aliakseiz/go-mysqldump)
+[License-Url]: http://opensource.org/licenses/MIT
+[License-Image]: https://img.shields.io/npm/l/express.svg
+
+[Stability-Status-Image]: http://badges.github.io/stability-badges/dist/experimental.svg
+
+[Godoc-Url]: https://pkg.go.dev/mod/github.com/aliakseiz/go-mysqldump
+[Godoc-Image]: https://godoc.org/github.com/aliakseiz/go-mysqldump?status.svg
+
+[ReportCard-Url]: https://goreportcard.com/report/github.com/aliakseiz/go-mysqldump
+[ReportCard-Image]: https://goreportcard.com/badge/github.com/aliakseiz/go-mysqldump
