@@ -6,7 +6,7 @@
 
 Create MySQL dumps without `mysqldump` dependency.
 
-Fork from JamesStewy/go-mysqldump. Includes pull request JamesStewy/go-mysqldump#14.
+Fork from [JamesStewy/go-mysqldump](https://github.com/JamesStewy/go-mysqldump). Includes pull request [JamesStewy/go-mysqldump#14](https://github.com/JamesStewy/go-mysqldump/pull/14).
 
 ### Features
 - Works with https://golang.org/pkg/compress/
