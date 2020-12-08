@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ### Security
 
+## [1.0.1] - 2020-12-08
+
+### Changed
+- Linter 1.31 with gofumpt.
+
 ## [1.0.0] - 2020-12-08
 Initial release based on [JamesStewy/go-mysqldump](https://github.com/JamesStewy/go-mysqldump) including [PR#14](https://github.com/JamesStewy/go-mysqldump/pull/14)
 
