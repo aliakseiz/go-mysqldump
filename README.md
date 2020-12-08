@@ -42,23 +42,27 @@ func main() {
 
 	dumpDir := "dumps"                                                     // you should create this directory
 	dumpFilenameFormat := fmt.Sprintf("%s-20060102T150405", config.DBName) // accepts time layout string and add .sql at the end of file
+	
 	db, err := sql.Open("mysql", config.FormatDSN())
 	if err != nil {
 		fmt.Println("Error opening database: ", err)
+		
 		return
 	}
 	// Register database with mysqldump
-	dumper, err := mysqldump.Register(db, dumpDir, dumpFilenameFormat)
+	dumper, err := mysqldump.Register(db, dumpDir, dumpFilenameFormat, config.DBName)
 	if err != nil {
-		fmt.Println("Error registering databse:", err)
+		fmt.Println("Error registering database:", err)
+		
 		return
 	}
 	// Dump database to file
-	err := dumper.Dump()
-	if err != nil {
+	if err = dumper.Dump(); err != nil {
 		fmt.Println("Error dumping:", err)
+		
 		return
 	}
+	
 	fmt.Printf("File is saved to %s", dumpFilenameFormat)
 	// Close dumper, connected database and file stream.
 	dumper.Close()
