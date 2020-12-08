@@ -1,4 +1,5 @@
-package mysqldump
+// nolint:lll
+package mysqldump_test
 
 import (
 	"bytes"
@@ -7,10 +8,11 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/aliakseiz/go-mysqldump"
 	"github.com/stretchr/testify/assert"
 )
 
-const expected = `-- Go SQL Dump ` + Version + `
+const expected = `-- Go SQL Dump ` + mysqldump.Version + `
 --
 -- ------------------------------------------------------
 -- Server version	test_version
@@ -57,9 +59,10 @@ UNLOCK TABLES;
 
 `
 
-func RunDump(t testing.TB, data *Data) {
+func RunDump(t testing.TB, data *mysqldump.Data) {
 	db, mock, err := sqlmock.New()
 	assert.NoError(t, err, "an error was not expected when opening a stub database connection")
+
 	defer db.Close()
 
 	data.Connection = db
@@ -90,12 +93,12 @@ func RunDump(t testing.TB, data *Data) {
 func TestDumpOk(t *testing.T) {
 	var buf bytes.Buffer
 
-	RunDump(t, &Data{
+	RunDump(t, &mysqldump.Data{
 		Out:        &buf,
 		LockTables: true,
 	})
 
-	result := strings.Replace(strings.Split(buf.String(), "-- Dump completed")[0], "`", "~", -1)
+	result := strings.ReplaceAll(strings.Split(buf.String(), "-- Dump completed")[0], "`", "~")
 
 	assert.Equal(t, expected, result)
 }
@@ -103,13 +106,14 @@ func TestDumpOk(t *testing.T) {
 func TestNoLockOk(t *testing.T) {
 	var buf bytes.Buffer
 
-	data := &Data{
+	data := &mysqldump.Data{
 		Out:        &buf,
 		LockTables: false,
 	}
 
 	db, mock, err := sqlmock.New()
 	assert.NoError(t, err, "an error was not expected when opening a stub database connection")
+
 	defer db.Close()
 
 	data.Connection = db
@@ -135,16 +139,17 @@ func TestNoLockOk(t *testing.T) {
 
 	assert.NoError(t, data.Dump(), "an error was not expected when dumping a stub database connection")
 
-	result := strings.Replace(strings.Split(buf.String(), "-- Dump completed")[0], "`", "~", -1)
+	result := strings.ReplaceAll(strings.Split(buf.String(), "-- Dump completed")[0], "`", "~")
 
 	assert.Equal(t, expected, result)
 }
 
 func BenchmarkDump(b *testing.B) {
-	data := &Data{
+	data := &mysqldump.Data{
 		Out:        ioutil.Discard,
 		LockTables: true,
 	}
+
 	for i := 0; i < b.N; i++ {
 		RunDump(b, data)
 	}

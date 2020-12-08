@@ -1,5 +1,5 @@
 /*
-Create MYSQL dumps in Go without the 'mysqldump' CLI as a dependancy.
+Create MYSQL dumps in Go without the 'mysqldump' CLI as a dependency.
 
 Example
 
@@ -23,7 +23,7 @@ This example uses the mysql driver (https://github.com/go-sql-driver/mysql) to c
         config.Addr = "your-hostname:your-port"
 
         dumpDir := "dumps"  // you should create this directory
-        dumpFilenameFormat := fmt.Sprintf("%s-20060102T150405", dbname)   // accepts time layout string and add .sql at the end of file
+        dumpFilenameFormat := fmt.Sprintf("%s-20060102T150405", dbname)
 
         db, err := sql.Open("mysql", config.FormatDNS())
         if err != nil {
