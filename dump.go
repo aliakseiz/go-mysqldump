@@ -17,11 +17,11 @@ import (
 // Connection:       Database connection to dump
 // IgnoreTables:     Mark sensitive tables to ignore
 // MaxAllowedPacket: Sets the largest packet size to use in backups
-// LockTables:       Lock all tables for the duration of the dump
+// LockTables:       Lock all tables for the duration of the dump.
 type Data struct {
 	Out              io.Writer
 	Connection       *sql.DB
-	IgnoreTables     []string
+	IgnoreTables     []string // TODO store in a map
 	MaxAllowedPacket int
 	LockTables       bool
 	DBName           string
@@ -38,7 +38,8 @@ type recreate struct {
 	Database string
 }
 
-type table struct {
+// Table struct contains variables for table template.
+type Table struct {
 	Name string
 	Err  error
 
@@ -47,20 +48,21 @@ type table struct {
 	values []interface{}
 }
 
-type metaData struct {
+// MetaData struct contains variables for header and footer templates.
+type MetaData struct {
 	DumpVersion   string
 	ServerVersion string
 	CompleteTime  string
 }
 
 const (
-	// Version of this plugin for easy reference
+	// Version of this plugin for easy reference.
 	Version = "0.5.1"
 
 	defaultMaxAllowedPacket = 4194304
 )
 
-// takes a *metaData
+// takes a *MetaData.
 const headerTmpl = `-- Go SQL Dump {{ .DumpVersion }}
 --
 -- ------------------------------------------------------
@@ -78,7 +80,7 @@ const headerTmpl = `-- Go SQL Dump {{ .DumpVersion }}
 /*!40111 SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;
 `
 
-// takes a *metaData
+// takes a *MetaData.
 const footerTmpl = `/*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
 /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
@@ -92,7 +94,7 @@ const footerTmpl = `/*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 -- Dump completed on {{ .CompleteTime }}
 `
 
-// Takes a *table
+// Takes a *Table.
 const tableTmpl = `
 --
 -- Table structure for table {{ .NameEsc }}
@@ -117,7 +119,7 @@ LOCK TABLES {{ .NameEsc }} WRITE;
 UNLOCK TABLES;
 `
 
-// Takes a *recreate
+// Takes a *recreate.
 const recreateTmpl = `
 DROP DATABASE IF EXISTS {{ .Database }};
 
@@ -128,9 +130,15 @@ USE {{ .Database }};
 
 const nullType = "NULL"
 
-// Dump data using struct
+var (
+	errUnexpectedTable = errors.New("returned table is not the same as requested table")
+	errDoubleInit      = errors.New("cannot init twice")
+	errNoColumns       = errors.New("no columns in table")
+)
+
+// Dump data using struct.
 func (data *Data) Dump() error {
-	meta := metaData{
+	meta := MetaData{
 		DumpVersion: Version,
 	}
 
@@ -138,19 +146,19 @@ func (data *Data) Dump() error {
 		data.MaxAllowedPacket = defaultMaxAllowedPacket
 	}
 
-	if err := data.getTemplates(); err != nil {
+	if err := data.GetTemplates(); err != nil {
 		return err
 	}
 
 	// Start the read only transaction and defer the rollback until the end.
 	// This way the database will have the exact state it did at the beginning of
 	// the backup and nothing can be accidentally committed.
-	if err := data.begin(); err != nil {
+	if err := data.Begin(); err != nil {
 		return err
 	}
 	defer data.rollback() // nolint:errcheck
 
-	if err := meta.updateServerVersion(data); err != nil {
+	if err := meta.UpdateServerVersion(data); err != nil {
 		return err
 	}
 
@@ -164,7 +172,7 @@ func (data *Data) Dump() error {
 		}
 	}
 
-	tables, err := data.getTables()
+	tables, err := data.GetTables()
 	if err != nil {
 		return err
 	}
@@ -172,11 +180,14 @@ func (data *Data) Dump() error {
 	// Lock all tables before dumping if present.
 	if data.LockTables && len(tables) > 0 {
 		var b bytes.Buffer
+
 		b.WriteString("LOCK TABLES ")
+
 		for index, name := range tables {
 			if index != 0 {
 				b.WriteString(",")
 			}
+
 			b.WriteString("`" + name + "` READ /*!32311 LOCAL */")
 		}
 
@@ -184,7 +195,7 @@ func (data *Data) Dump() error {
 			return err
 		}
 
-		defer data.Connection.Exec("UNLOCK TABLES")
+		defer data.Connection.Exec("UNLOCK TABLES") // nolint:errcheck
 	}
 
 	for _, name := range tables {
@@ -192,52 +203,54 @@ func (data *Data) Dump() error {
 			return err
 		}
 	}
+
 	if data.err != nil {
 		return data.err
 	}
 
 	meta.CompleteTime = time.Now().String()
+
 	return data.footerTmpl.Execute(data.Out, meta)
 }
 
 // MARK: - Private methods
 
-// begin starts a read only transaction that will be whatever the database was
-// when it was called
-func (data *Data) begin() (err error) {
+// Begin starts a read only transaction that will be whatever the database was when it was called.
+func (data *Data) Begin() (err error) {
 	data.tx, err = data.Connection.BeginTx(context.Background(), &sql.TxOptions{
 		Isolation: sql.LevelRepeatableRead,
 		ReadOnly:  true,
 	})
+
 	return
 }
 
-// rollback cancels the transaction
+// rollback cancels the transaction.
 func (data *Data) rollback() error {
 	return data.tx.Rollback()
 }
-
-// MARK: writter methods
 
 func (data *Data) dumpTable(name string) error {
 	if data.err != nil {
 		return data.err
 	}
-	table := data.createTable(name)
-	return data.writeTable(table)
+
+	table := data.CreateTable(name)
+
+	return data.WriteTable(table)
 }
 
-func (data *Data) writeTable(table *table) error {
+// WriteTable fills table template with provided *table data.
+func (data *Data) WriteTable(table *Table) error {
 	if err := data.tableTmpl.Execute(data.Out, table); err != nil {
 		return err
 	}
+
 	return table.Err
 }
 
-// MARK: get methods
-
-// getTemplates initilaizes the templates on data from the constants in this file
-func (data *Data) getTemplates() (err error) {
+// GetTemplates initializes the templates on data from the constants in this file.
+func (data *Data) GetTemplates() (err error) {
 	data.headerTmpl, err = template.New("mysqldumpHeader").Parse(headerTmpl)
 	if err != nil {
 		return
@@ -257,10 +270,12 @@ func (data *Data) getTemplates() (err error) {
 	if err != nil {
 		return
 	}
+
 	return
 }
 
-func (data *Data) getTables() ([]string, error) {
+// GetTables returns database tables.
+func (data *Data) GetTables() ([]string, error) {
 	tables := make([]string, 0)
 
 	rows, err := data.tx.Query("SHOW TABLES")
@@ -271,13 +286,16 @@ func (data *Data) getTables() ([]string, error) {
 
 	for rows.Next() {
 		var table sql.NullString
+
 		if err := rows.Scan(&table); err != nil {
 			return tables, err
 		}
+
 		if table.Valid && !data.isIgnoredTable(table.String) {
 			tables = append(tables, table.String)
 		}
 	}
+
 	return tables, rows.Err()
 }
 
@@ -287,49 +305,52 @@ func (data *Data) isIgnoredTable(name string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
-func (meta *metaData) updateServerVersion(data *Data) (err error) {
+// UpdateServerVersion fetches server version and stores it in Data.
+func (meta *MetaData) UpdateServerVersion(data *Data) (err error) {
 	var serverVersion sql.NullString
 
 	err = data.tx.QueryRow("SELECT version()").Scan(&serverVersion)
 	meta.ServerVersion = serverVersion.String
+
 	return
 }
 
-// MARK: create methods
-
-func (data *Data) createTable(name string) *table {
-	return &table{
+// CreateTable initializes a Table struct.
+func (data *Data) CreateTable(name string) *Table {
+	return &Table{
 		Name: name,
 		data: data,
 	}
 }
 
-func (table *table) NameEsc() string {
+func (table *Table) NameEsc() string {
 	return "`" + table.Name + "`"
 }
 
-func (table *table) CreateSQL() (string, error) {
+func (table *Table) CreateSQL() (string, error) {
 	var tableReturn, tableSQL sql.NullString
 	if err := table.data.tx.QueryRow("SHOW CREATE TABLE "+table.NameEsc()).Scan(&tableReturn, &tableSQL); err != nil {
 		return "", err
 	}
 
 	if tableReturn.String != table.Name {
-		return "", errors.New("Returned table is not the same as requested table")
+		return "", errUnexpectedTable
 	}
 
 	return tableSQL.String, nil
 }
 
-func (table *table) Init() (err error) {
+func (table *Table) Init() (err error) {
 	if len(table.values) != 0 {
-		return errors.New("can't init twice")
+		return errDoubleInit
 	}
 
-	table.rows, err = table.data.tx.Query("SELECT * FROM " + table.NameEsc())
+	// nolint:rowserrcheck, sqlclosecheck
+	table.rows, err = table.data.tx.Query(fmt.Sprintf("SELECT * FROM %s", table.NameEsc()))
 	if err != nil {
 		return err
 	}
@@ -338,8 +359,9 @@ func (table *table) Init() (err error) {
 	if err != nil {
 		return err
 	}
+
 	if len(columns) == 0 {
-		return errors.New("No columns in table " + table.Name + ".")
+		return errNoColumns
 	}
 
 	tt, err := table.rows.ColumnTypes()
@@ -348,29 +370,36 @@ func (table *table) Init() (err error) {
 	}
 
 	var t reflect.Type
+
 	table.values = make([]interface{}, len(tt))
+
 	for i, tp := range tt {
 		st := tp.ScanType()
-		if tp.DatabaseTypeName() == "BLOB" {
+
+		switch {
+		case tp.DatabaseTypeName() == "BLOB":
 			t = reflect.TypeOf(sql.RawBytes{})
-		} else if st != nil && (st.Kind() == reflect.Int ||
+		case st != nil && (st.Kind() == reflect.Int ||
 			st.Kind() == reflect.Int8 ||
 			st.Kind() == reflect.Int16 ||
 			st.Kind() == reflect.Int32 ||
-			st.Kind() == reflect.Int64) {
+			st.Kind() == reflect.Int64):
 			t = reflect.TypeOf(sql.NullInt64{})
-		} else {
+		default:
 			t = reflect.TypeOf(sql.NullString{})
 		}
+
 		table.values[i] = reflect.New(t).Interface()
 	}
+
 	return nil
 }
 
-func (table *table) Next() bool {
+func (table *Table) Next() bool {
 	if table.rows == nil {
 		if err := table.Init(); err != nil {
 			table.Err = err
+
 			return false
 		}
 	}
@@ -378,37 +407,43 @@ func (table *table) Next() bool {
 	if table.rows.Next() {
 		if err := table.rows.Scan(table.values...); err != nil {
 			table.Err = err
+
 			return false
 		} else if err := table.rows.Err(); err != nil {
 			table.Err = err
+
 			return false
 		}
 	} else {
 		table.rows.Close()
 		table.rows = nil
+
 		return false
 	}
+
 	return true
 }
 
-func (table *table) RowValues() string {
+func (table *Table) RowValues() string {
 	return table.RowBuffer().String()
 }
 
-func (table *table) RowBuffer() *bytes.Buffer {
+func (table *Table) RowBuffer() *bytes.Buffer {
 	var b bytes.Buffer
+
 	b.WriteString("(")
 
 	for key, value := range table.values {
 		if key != 0 {
 			b.WriteString(",")
 		}
+
 		switch s := value.(type) {
 		case nil:
 			b.WriteString(nullType)
 		case *sql.NullString:
 			if s.Valid {
-				fmt.Fprintf(&b, "'%s'", sanitize(s.String))
+				fmt.Fprintf(&b, "'%s'", Sanitize(s.String))
 			} else {
 				b.WriteString(nullType)
 			}
@@ -422,21 +457,24 @@ func (table *table) RowBuffer() *bytes.Buffer {
 			if len(*s) == 0 {
 				b.WriteString(nullType)
 			} else {
-				fmt.Fprintf(&b, "_binary '%s'", sanitize(string(*s)))
+				fmt.Fprintf(&b, "_binary '%s'", Sanitize(string(*s)))
 			}
 		default:
 			fmt.Fprintf(&b, "'%s'", value)
 		}
 	}
+
 	b.WriteString(")")
 
 	return &b
 }
 
-func (table *table) Stream() <-chan string {
+func (table *Table) Stream() <-chan string {
 	valueOut := make(chan string, 1)
+
 	go func() {
 		defer close(valueOut)
+
 		var insert bytes.Buffer
 
 		for table.Next() {
@@ -445,6 +483,7 @@ func (table *table) Stream() <-chan string {
 			if insert.Len() != 0 && insert.Len()+b.Len() > table.data.MaxAllowedPacket-1 {
 				insert.WriteString(";")
 				valueOut <- insert.String()
+
 				insert.Reset()
 			}
 
@@ -453,12 +492,15 @@ func (table *table) Stream() <-chan string {
 			} else {
 				insert.WriteString(",")
 			}
-			b.WriteTo(&insert)
+
+			b.WriteTo(&insert) // nolint:errcheck
 		}
+
 		if insert.Len() != 0 {
 			insert.WriteString(";")
 			valueOut <- insert.String()
 		}
 	}()
+
 	return valueOut
 }
