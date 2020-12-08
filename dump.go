@@ -12,27 +12,30 @@ import (
 	"time"
 )
 
-/*
-Data struct to configure dump behavior
-
-    Out:              Stream to wite to
-    Connection:       Database connection to dump
-    IgnoreTables:     Mark sensitive tables to ignore
-    MaxAllowedPacket: Sets the largest packet size to use in backups
-    LockTables:       Lock all tables for the duration of the dump
-*/
+// Data struct to configure dump behavior.
+// Out:              Stream to write to
+// Connection:       Database connection to dump
+// IgnoreTables:     Mark sensitive tables to ignore
+// MaxAllowedPacket: Sets the largest packet size to use in backups
+// LockTables:       Lock all tables for the duration of the dump
 type Data struct {
 	Out              io.Writer
 	Connection       *sql.DB
 	IgnoreTables     []string
 	MaxAllowedPacket int
 	LockTables       bool
+	DBName           string
 
-	tx         *sql.Tx
-	headerTmpl *template.Template
-	tableTmpl  *template.Template
-	footerTmpl *template.Template
-	err        error
+	tx           *sql.Tx
+	headerTmpl   *template.Template
+	recreateTmpl *template.Template
+	tableTmpl    *template.Template
+	footerTmpl   *template.Template
+	err          error
+}
+
+type recreate struct {
+	Database string
 }
 
 type table struct {
@@ -114,6 +117,15 @@ LOCK TABLES {{ .NameEsc }} WRITE;
 UNLOCK TABLES;
 `
 
+// Takes a *recreate
+const recreateTmpl = `
+DROP DATABASE IF EXISTS {{ .Database }};
+
+CREATE DATABASE {{ .Database }} CHARACTER SET = 'utf8' COLLATE = 'utf8_general_ci';
+
+USE {{ .Database }};
+`
+
 const nullType = "NULL"
 
 // Dump data using struct
@@ -130,13 +142,13 @@ func (data *Data) Dump() error {
 		return err
 	}
 
-	// Start the read only transaction and defer the rollback until the end
-	// This way the database will have the exact state it did at the begining of
-	// the backup and nothing can be accidentally committed
+	// Start the read only transaction and defer the rollback until the end.
+	// This way the database will have the exact state it did at the beginning of
+	// the backup and nothing can be accidentally committed.
 	if err := data.begin(); err != nil {
 		return err
 	}
-	defer data.rollback()
+	defer data.rollback() // nolint:errcheck
 
 	if err := meta.updateServerVersion(data); err != nil {
 		return err
@@ -146,12 +158,18 @@ func (data *Data) Dump() error {
 		return err
 	}
 
+	if data.DBName != "" {
+		if err := data.recreateTmpl.Execute(data.Out, recreate{Database: data.DBName}); err != nil {
+			return err
+		}
+	}
+
 	tables, err := data.getTables()
 	if err != nil {
 		return err
 	}
 
-	// Lock all tables before dumping if present
+	// Lock all tables before dumping if present.
 	if data.LockTables && len(tables) > 0 {
 		var b bytes.Buffer
 		b.WriteString("LOCK TABLES ")
@@ -225,6 +243,11 @@ func (data *Data) getTemplates() (err error) {
 		return
 	}
 
+	data.recreateTmpl, err = template.New("mysqldumpRecreate").Parse(recreateTmpl)
+	if err != nil {
+		return
+	}
+
 	data.tableTmpl, err = template.New("mysqldumpTable").Parse(tableTmpl)
 	if err != nil {
 		return
@@ -269,6 +292,7 @@ func (data *Data) isIgnoredTable(name string) bool {
 
 func (meta *metaData) updateServerVersion(data *Data) (err error) {
 	var serverVersion sql.NullString
+
 	err = data.tx.QueryRow("SELECT version()").Scan(&serverVersion)
 	meta.ServerVersion = serverVersion.String
 	return

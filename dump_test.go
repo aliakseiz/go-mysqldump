@@ -232,6 +232,7 @@ func TestCreateTableAllValuesWithNil(t *testing.T) {
 	assert.EqualValues(t, expectedResults, results)
 }
 
+// nolint:dupl
 func TestCreateTableOk(t *testing.T) {
 	data, mock, err := getMockData()
 	assert.NoError(t, err, "an error was not expected when opening a stub database connection")
@@ -285,6 +286,7 @@ UNLOCK TABLES;
 	assert.Equal(t, expectedResult, result)
 }
 
+// nolint:dupl
 func TestCreateTableOkSmallPackets(t *testing.T) {
 	data, mock, err := getMockData()
 	assert.NoError(t, err, "an error was not expected when opening a stub database connection")
