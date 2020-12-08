@@ -7,7 +7,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## [Unreleased]
 
 ### Added
-- Database name to drop and recreate in a dump 
 
 ### Changed
 
@@ -18,3 +17,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Removed
 
 ### Security
+
+## [1.0.0] - 2020-12-08
+Initial release based on [JamesStewy/go-mysqldump](https://github.com/JamesStewy/go-mysqldump) including [PR#14](https://github.com/JamesStewy/go-mysqldump/pull/14)
+
+### Added
+- Database name to drop and recreate in a dump
