@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ### Security
 
+## [1.0.2] - 2022-07-04
+
+### Fixed
+- Dump of databases with names containing hyphens (`some-service-db`)
+
 ## [1.0.1] - 2020-12-08
 
 ### Changed

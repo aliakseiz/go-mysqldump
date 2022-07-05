@@ -120,13 +120,10 @@ UNLOCK TABLES;
 `
 
 // Takes a *recreate.
-const recreateTmpl = `
-DROP DATABASE IF EXISTS {{ .Database }};
-
-CREATE DATABASE {{ .Database }} CHARACTER SET = 'utf8' COLLATE = 'utf8_general_ci';
-
-USE {{ .Database }};
-`
+const recreateTmpl = " " +
+	"DROP DATABASE IF EXISTS `{{ .Database }}`;" +
+	"CREATE DATABASE `{{ .Database }}` CHARACTER SET = 'utf8' COLLATE = 'utf8_general_ci';" +
+	"USE `{{ .Database }}`;"
 
 const nullType = "NULL"
 
