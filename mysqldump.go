@@ -19,7 +19,9 @@ var (
 // db: Database that will be dumped (https://golang.org/pkg/database/sql/#DB).
 // dir: Path to the directory where the dumps will be stored.
 // format: Format to be used to name each dump file.
-//   Uses time.Time.Format (https://golang.org/pkg/time/#Time.Format). format appended with '.sql'.
+//
+//	Uses time.Time.Format (https://golang.org/pkg/time/#Time.Format). format appended with '.sql'.
+//
 // database: Database name to drop and create within a dump file. Recreate section omitted, when empty.
 func Register(db *sql.DB, dir, format, database string) (*Data, error) {
 	if !isDir(dir) {

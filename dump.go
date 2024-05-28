@@ -345,6 +345,7 @@ func (data *Data) CreateTable(name string) (*Table, error) {
 
 	return table, nil
 }
+
 func (table *Table) NameEsc() string {
 	return "`" + table.Name + "`"
 }
@@ -371,6 +372,7 @@ func (table *Table) CreateSQL() (string, error) {
 
 	return createSQL.String, nil
 }
+
 func (table *Table) Init() (err error) {
 	if len(table.values) != 0 {
 		return errDoubleInit
