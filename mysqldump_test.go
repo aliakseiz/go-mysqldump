@@ -3,7 +3,7 @@ package mysqldump_test
 
 import (
 	"bytes"
-	"io/ioutil"
+	"io"
 	"strings"
 	"testing"
 
@@ -12,7 +12,47 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-const expected = `-- Go SQL Dump ` + mysqldump.Version + `
+const expectedTable = `--
+-- Table structure for table ~Test_Table~
+--
+
+
+DROP TABLE IF EXISTS ~Test_Table~;
+
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+ SET character_set_client = utf8mb4 ;
+CREATE TABLE 'Test_Table' (~id~ int(11) NOT NULL AUTO_INCREMENT,~email~ char(60) DEFAULT NULL, ~name~ char(60), PRIMARY KEY (~id~))ENGINE=InnoDB DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+
+--
+-- Dumping data for table ~Test_Table~
+--
+
+LOCK TABLES ~Test_Table~ WRITE;
+/*!40000 ALTER TABLE ~Test_Table~ DISABLE KEYS */;
+INSERT INTO ~Test_Table~ VALUES ('1',NULL,'Test Name 1'),('2','test2@test.de','Test Name 2');
+/*!40000 ALTER TABLE ~Test_Table~ ENABLE KEYS */;
+UNLOCK TABLES;
+
+`
+
+const expectedView = `
+--
+-- Table structure for table ~Test_View~
+--
+
+
+DROP VIEW IF EXISTS ~Test_View~;
+
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+ SET character_set_client = utf8mb4 ;
+CREATE VIEW 'Test_View' AS SELECT ~id~, ~email~, ~name~ FROM 'Test_Table';
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+`
+
+const expectedHeader = `-- Go SQL Dump ` + mysqldump.Version + `
 --
 -- ------------------------------------------------------
 -- Server version	test_version
@@ -28,25 +68,9 @@ const expected = `-- Go SQL Dump ` + mysqldump.Version + `
 /*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;
 /*!40111 SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;
 
---
--- Table structure for table ~Test_Table~
---
+`
 
-DROP TABLE IF EXISTS ~Test_Table~;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
- SET character_set_client = utf8mb4 ;
-CREATE TABLE 'Test_Table' (~id~ int(11) NOT NULL AUTO_INCREMENT,~email~ char(60) DEFAULT NULL, ~name~ char(60), PRIMARY KEY (~id~))ENGINE=InnoDB DEFAULT CHARSET=latin1;
-/*!40101 SET character_set_client = @saved_cs_client */;
-
---
--- Dumping data for table ~Test_Table~
---
-
-LOCK TABLES ~Test_Table~ WRITE;
-/*!40000 ALTER TABLE ~Test_Table~ DISABLE KEYS */;
-INSERT INTO ~Test_Table~ VALUES ('1',NULL,'Test Name 1'),('2','test2@test.de','Test Name 2');
-/*!40000 ALTER TABLE ~Test_Table~ ENABLE KEYS */;
-UNLOCK TABLES;
+const expectedFooter = `
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
 /*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
@@ -67,7 +91,8 @@ func RunDump(t testing.TB, data *mysqldump.Data) {
 
 	data.Connection = db
 	showTablesRows := sqlmock.NewRows([]string{"Tables_in_Testdb"}).
-		AddRow("Test_Table")
+		AddRow("Test_Table").
+		AddRow("Test_View")
 
 	serverVersionRows := sqlmock.NewRows([]string{"Version()"}).
 		AddRow("test_version")
@@ -79,12 +104,23 @@ func RunDump(t testing.TB, data *mysqldump.Data) {
 		AddRow(1, nil, "Test Name 1").
 		AddRow(2, "test2@test.de", "Test Name 2")
 
+	createViewRows := sqlmock.NewRows([]string{"View", "Create View"}).
+		AddRow("Test_View", "CREATE VIEW 'Test_View' AS SELECT `id`, `email`, `name` FROM 'Test_Table'")
+
 	mock.ExpectBegin()
+
 	mock.ExpectQuery(`^SELECT version\(\)$`).WillReturnRows(serverVersionRows)
 	mock.ExpectQuery(`^SHOW TABLES$`).WillReturnRows(showTablesRows)
-	mock.ExpectExec("^LOCK TABLES `Test_Table` READ /\\*!32311 LOCAL \\*/$").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("^LOCK TABLES `Test_Table` READ /\\*!32311 LOCAL \\*/,`Test_View` READ /\\*!32311 LOCAL \\*/$").WillReturnResult(sqlmock.NewResult(1, 1))
+
+	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_name = \?`).WithArgs("Test_Table").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
 	mock.ExpectQuery("^SHOW CREATE TABLE `Test_Table`$").WillReturnRows(createTableRows)
 	mock.ExpectQuery("^SELECT (.+) FROM `Test_Table`$").WillReturnRows(createTableValueRows)
+
+	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_name = \?`).WithArgs("Test_View").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("VIEW"))
+	mock.ExpectQuery("^SHOW CREATE VIEW `Test_View`$").WillReturnRows(createViewRows)
+	mock.ExpectQuery("^SELECT (.+) FROM `Test_View`$").WillReturnRows(createTableValueRows)
+
 	mock.ExpectRollback()
 
 	assert.NoError(t, data.Dump(), "an error was not expected when dumping a stub database connection")
@@ -100,7 +136,8 @@ func TestDumpOk(t *testing.T) {
 
 	result := strings.ReplaceAll(strings.Split(buf.String(), "-- Dump completed")[0], "`", "~")
 
-	assert.Equal(t, expected, result)
+	expectedResult := expectedHeader + expectedTable + expectedView + expectedFooter
+	assert.Equal(t, expectedResult, result)
 }
 
 func TestNoLockOk(t *testing.T) {
@@ -118,7 +155,8 @@ func TestNoLockOk(t *testing.T) {
 
 	data.Connection = db
 	showTablesRows := sqlmock.NewRows([]string{"Tables_in_Testdb"}).
-		AddRow("Test_Table")
+		AddRow("Test_Table").
+		AddRow("Test_View")
 
 	serverVersionRows := sqlmock.NewRows([]string{"Version()"}).
 		AddRow("test_version")
@@ -130,23 +168,37 @@ func TestNoLockOk(t *testing.T) {
 		AddRow(1, nil, "Test Name 1").
 		AddRow(2, "test2@test.de", "Test Name 2")
 
+	createViewRows := sqlmock.NewRows([]string{"View", "Create View"}).
+		AddRow("Test_View", "CREATE VIEW 'Test_View' AS SELECT `id`, `email`, `name` FROM 'Test_Table'")
+
+	// Add expectation for table type check
+	tableTypeRows := sqlmock.NewRows([]string{"table_type"}).
+		AddRow("BASE TABLE").
+		AddRow("VIEW")
+
 	mock.ExpectBegin()
 	mock.ExpectQuery(`^SELECT version\(\)$`).WillReturnRows(serverVersionRows)
 	mock.ExpectQuery(`^SHOW TABLES$`).WillReturnRows(showTablesRows)
+
+	mock.ExpectQuery(`^SELECT table_type FROM information_schema.tables WHERE table_name = \?$`).WithArgs("Test_Table").WillReturnRows(tableTypeRows)
 	mock.ExpectQuery("^SHOW CREATE TABLE `Test_Table`$").WillReturnRows(createTableRows)
 	mock.ExpectQuery("^SELECT (.+) FROM `Test_Table`$").WillReturnRows(createTableValueRows)
+
+	mock.ExpectQuery(`^SELECT table_type FROM information_schema.tables WHERE table_name = \?$`).WithArgs("Test_View").WillReturnRows(tableTypeRows)
+	mock.ExpectQuery("^SHOW CREATE VIEW `Test_View`$").WillReturnRows(createViewRows)
 	mock.ExpectRollback()
 
 	assert.NoError(t, data.Dump(), "an error was not expected when dumping a stub database connection")
 
 	result := strings.ReplaceAll(strings.Split(buf.String(), "-- Dump completed")[0], "`", "~")
 
-	assert.Equal(t, expected, result)
+	expectedResult := expectedHeader + expectedTable + expectedView + expectedFooter
+	assert.Equal(t, expectedResult, result)
 }
 
 func BenchmarkDump(b *testing.B) {
 	data := &mysqldump.Data{
-		Out:        ioutil.Discard,
+		Out:        io.Discard,
 		LockTables: true,
 	}
 
