@@ -7,11 +7,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## [Unreleased]
 
 ### Added
-- Support of VIEW tables
 
 ### Changed
-- Update `go-sqlmock` from `v1.5.0` to `v1.5.2`
-- Update `testify` from `v1.6.1` to `v1.9.0`
 
 ### Fixed
 
@@ -20,6 +17,15 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Removed
 
 ### Security
+
+## [1.1.0] - 2024-05-28
+
+### Added
+- Support of VIEW tables
+
+### Changed
+- Update `go-sqlmock` from `v1.5.0` to `v1.5.2`
+- Update `testify` from `v1.6.1` to `v1.9.0`
 
 ## [1.0.2] - 2022-07-04
 
