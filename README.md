@@ -13,6 +13,7 @@ Fork from [JamesStewy/go-mysqldump](https://github.com/JamesStewy/go-mysqldump).
 - Partial writes not stored in memory and stream monitoring. Works with https://github.com/machinebox/progress
 - Supports unquoted numbers
 - Supports BLOB dumps
+- Supports VIEW tables
 - Allows ignoring tables
 - SQL string quoting / sanitation (useful for BLOBs and JSONs)
 - Concurrent dumping
