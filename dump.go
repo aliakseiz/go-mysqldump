@@ -40,8 +40,9 @@ type recreate struct {
 
 // Table struct contains variables for table template.
 type Table struct {
-	Name string
-	Err  error
+	Name   string
+	Err    error
+	IsView bool
 
 	data   *Data
 	rows   *sql.Rows
@@ -94,18 +95,22 @@ const footerTmpl = `/*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 -- Dump completed on {{ .CompleteTime }}
 `
 
-// Takes a *Table.
 const tableTmpl = `
 --
 -- Table structure for table {{ .NameEsc }}
 --
 
+{{ if .IsView }}
+DROP VIEW IF EXISTS {{ .NameEsc }};
+{{ else }}
 DROP TABLE IF EXISTS {{ .NameEsc }};
+{{ end }}
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
  SET character_set_client = utf8mb4 ;
 {{ .CreateSQL }};
 /*!40101 SET character_set_client = @saved_cs_client */;
 
+{{ if not .IsView }}
 --
 -- Dumping data for table {{ .NameEsc }}
 --
@@ -117,6 +122,7 @@ LOCK TABLES {{ .NameEsc }} WRITE;
 {{ end -}}
 /*!40000 ALTER TABLE {{ .NameEsc }} ENABLE KEYS */;
 UNLOCK TABLES;
+{{ end }}
 `
 
 // Takes a *recreate.
@@ -196,7 +202,7 @@ func (data *Data) Dump() error {
 	}
 
 	for _, name := range tables {
-		if err := data.dumpTable(name); err != nil {
+		if err = data.dumpTable(name); err != nil {
 			return err
 		}
 	}
@@ -232,7 +238,10 @@ func (data *Data) dumpTable(name string) error {
 		return data.err
 	}
 
-	table := data.CreateTable(name)
+	table, err := data.CreateTable(name)
+	if err != nil {
+		return err
+	}
 
 	return data.WriteTable(table)
 }
@@ -317,11 +326,24 @@ func (meta *MetaData) UpdateServerVersion(data *Data) (err error) {
 }
 
 // CreateTable initializes a Table struct.
-func (data *Data) CreateTable(name string) *Table {
-	return &Table{
+func (data *Data) CreateTable(name string) (*Table, error) {
+	table := &Table{
 		Name: name,
 		data: data,
 	}
+
+	var tableType string
+
+	err := data.tx.QueryRow("SELECT table_type FROM information_schema.tables WHERE table_name = ?", name).Scan(&tableType)
+	if err != nil {
+		return nil, err
+	}
+
+	if tableType == "VIEW" {
+		table.IsView = true
+	}
+
+	return table, nil
 }
 
 func (table *Table) NameEsc() string {
@@ -329,16 +351,26 @@ func (table *Table) NameEsc() string {
 }
 
 func (table *Table) CreateSQL() (string, error) {
-	var tableReturn, tableSQL sql.NullString
-	if err := table.data.tx.QueryRow("SHOW CREATE TABLE "+table.NameEsc()).Scan(&tableReturn, &tableSQL); err != nil {
+	var (
+		nameReturn, createSQL sql.NullString
+		createSQLQuery        string
+	)
+
+	if table.IsView {
+		createSQLQuery = "SHOW CREATE VIEW " + table.NameEsc()
+	} else {
+		createSQLQuery = "SHOW CREATE TABLE " + table.NameEsc()
+	}
+
+	if err := table.data.tx.QueryRow(createSQLQuery).Scan(&nameReturn, &createSQL); err != nil {
 		return "", err
 	}
 
-	if tableReturn.String != table.Name {
+	if nameReturn.String != table.Name {
 		return "", errUnexpectedTable
 	}
 
-	return tableSQL.String, nil
+	return createSQL.String, nil
 }
 
 func (table *Table) Init() (err error) {
@@ -500,4 +532,9 @@ func (table *Table) Stream() <-chan string {
 	}()
 
 	return valueOut
+}
+
+// SetData assigns the data pointer to the table.
+func (table *Table) SetData(data *Data) {
+	table.data = data
 }

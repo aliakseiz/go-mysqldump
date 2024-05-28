@@ -124,12 +124,16 @@ func TestCreateTableSQLOk(t *testing.T) {
 
 	defer data.Close()
 
+	// Add expectation for table type check
+	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_name = \?`).WithArgs("Test_Table").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
+
 	rows := sqlmock.NewRows([]string{"Table", "Create Table"}).
 		AddRow("Test_Table", "CREATE TABLE 'Test_Table' (`id` int(11) NOT NULL AUTO_INCREMENT,`s` char(60) DEFAULT NULL, PRIMARY KEY (`id`))ENGINE=InnoDB DEFAULT CHARSET=latin1")
 
 	mock.ExpectQuery("^SHOW CREATE TABLE `Test_Table`$").WillReturnRows(rows)
 
-	table := data.CreateTable("Test_Table")
+	table, err := data.CreateTable("Test_Table")
+	assert.NoError(t, err)
 
 	result, err := table.CreateSQL()
 	assert.NoError(t, err)
@@ -154,9 +158,11 @@ func TestCreateTableRowValues(t *testing.T) {
 		AddRow(1, "test@test.de", "Test Name 1").
 		AddRow(2, "test2@test.de", "Test Name 2")
 
+	mock.ExpectQuery("SELECT table_type FROM information_schema.tables WHERE table_name = ?").WithArgs("test").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
 	mock.ExpectQuery("^SELECT (.+) FROM `test`$").WillReturnRows(rows)
 
-	table := data.CreateTable("test")
+	table, err := data.CreateTable("test")
+	assert.NoError(t, err)
 
 	assert.True(t, table.Next())
 
@@ -179,11 +185,13 @@ func TestCreateTableValuesSteam(t *testing.T) {
 		AddRow(1, "test@test.de", "Test Name 1").
 		AddRow(2, "test2@test.de", "Test Name 2")
 
+	mock.ExpectQuery("SELECT table_type FROM information_schema.tables WHERE table_name = ?").WithArgs("test").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
 	mock.ExpectQuery("^SELECT (.+) FROM `test`$").WillReturnRows(rows)
 
 	data.MaxAllowedPacket = 4096
 
-	table := data.CreateTable("test")
+	table, err := data.CreateTable("test")
+	assert.NoError(t, err)
 
 	s := table.Stream()
 	assert.EqualValues(t, "INSERT INTO `test` VALUES ('1','test@test.de','Test Name 1'),('2','test2@test.de','Test Name 2');", <-s)
@@ -202,11 +210,13 @@ func TestCreateTableValuesSteamSmallPackets(t *testing.T) {
 		AddRow(1, "test@test.de", "Test Name 1").
 		AddRow(2, "test2@test.de", "Test Name 2")
 
+	mock.ExpectQuery("SELECT table_type FROM information_schema.tables WHERE table_name = ?").WithArgs("test").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
 	mock.ExpectQuery("^SELECT (.+) FROM `test`$").WillReturnRows(rows)
 
 	data.MaxAllowedPacket = 64
 
-	table := data.CreateTable("test")
+	table, err := data.CreateTable("test")
+	assert.NoError(t, err)
 
 	s := table.Stream()
 	assert.EqualValues(t, "INSERT INTO `test` VALUES ('1','test@test.de','Test Name 1');", <-s)
@@ -227,9 +237,11 @@ func TestCreateTableAllValuesWithNil(t *testing.T) {
 		AddRow(2, "test2@test.de", "Test Name 2").
 		AddRow(3, "", "Test Name 3")
 
+	mock.ExpectQuery("SELECT table_type FROM information_schema.tables WHERE table_name = ?").WithArgs("test").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
 	mock.ExpectQuery("^SELECT (.+) FROM `test`$").WillReturnRows(rows)
 
-	table := data.CreateTable("test")
+	table, err := data.CreateTable("test")
+	assert.NoError(t, err)
 
 	results := make([]string, 0)
 
@@ -255,6 +267,9 @@ func TestCreateTableOk(t *testing.T) {
 
 	defer data.Close()
 
+	// Add expectation for table type check
+	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_name = \?`).WithArgs("Test_Table").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
+
 	createTableRows := sqlmock.NewRows([]string{"Table", "Create Table"}).
 		AddRow("Test_Table", "CREATE TABLE 'Test_Table' (`id` int(11) NOT NULL AUTO_INCREMENT,`s` char(60) DEFAULT NULL, PRIMARY KEY (`id`))ENGINE=InnoDB DEFAULT CHARSET=latin1")
 
@@ -272,7 +287,8 @@ func TestCreateTableOk(t *testing.T) {
 
 	assert.NoError(t, data.GetTemplates())
 
-	table := data.CreateTable("Test_Table")
+	table, err := data.CreateTable("Test_Table")
+	assert.NoError(t, err)
 
 	data.WriteTable(table) // nolint:errcheck
 
@@ -284,11 +300,14 @@ func TestCreateTableOk(t *testing.T) {
 -- Table structure for table ~Test_Table~
 --
 
+
 DROP TABLE IF EXISTS ~Test_Table~;
+
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
  SET character_set_client = utf8mb4 ;
 CREATE TABLE 'Test_Table' (~id~ int(11) NOT NULL AUTO_INCREMENT,~s~ char(60) DEFAULT NULL, PRIMARY KEY (~id~))ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
+
 
 --
 -- Dumping data for table ~Test_Table~
@@ -299,6 +318,7 @@ LOCK TABLES ~Test_Table~ WRITE;
 INSERT INTO ~Test_Table~ VALUES ('1',NULL,'Test Name 1'),('2','test2@test.de','Test Name 2');
 /*!40000 ALTER TABLE ~Test_Table~ ENABLE KEYS */;
 UNLOCK TABLES;
+
 `
 	result := strings.ReplaceAll(buf.String(), "`", "~")
 	assert.Equal(t, expectedResult, result)
@@ -310,6 +330,9 @@ func TestCreateTableOkSmallPackets(t *testing.T) {
 	assert.NoError(t, err, "an error was not expected when opening a stub database connection")
 
 	defer data.Close()
+
+	// Add expectation for table type check
+	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_name = \?`).WithArgs("Test_Table").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
 
 	createTableRows := sqlmock.NewRows([]string{"Table", "Create Table"}).
 		AddRow("Test_Table", "CREATE TABLE 'Test_Table' (`id` int(11) NOT NULL AUTO_INCREMENT,`s` char(60) DEFAULT NULL, PRIMARY KEY (`id`))ENGINE=InnoDB DEFAULT CHARSET=latin1")
@@ -328,7 +351,8 @@ func TestCreateTableOkSmallPackets(t *testing.T) {
 
 	assert.NoError(t, data.GetTemplates())
 
-	table := data.CreateTable("Test_Table")
+	table, err := data.CreateTable("Test_Table")
+	assert.NoError(t, err)
 
 	data.WriteTable(table) // nolint:errcheck
 
@@ -340,11 +364,14 @@ func TestCreateTableOkSmallPackets(t *testing.T) {
 -- Table structure for table ~Test_Table~
 --
 
+
 DROP TABLE IF EXISTS ~Test_Table~;
+
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
  SET character_set_client = utf8mb4 ;
 CREATE TABLE 'Test_Table' (~id~ int(11) NOT NULL AUTO_INCREMENT,~s~ char(60) DEFAULT NULL, PRIMARY KEY (~id~))ENGINE=InnoDB DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
+
 
 --
 -- Dumping data for table ~Test_Table~
@@ -356,6 +383,7 @@ INSERT INTO ~Test_Table~ VALUES ('1',NULL,'Test Name 1');
 INSERT INTO ~Test_Table~ VALUES ('2','test2@test.de','Test Name 2');
 /*!40000 ALTER TABLE ~Test_Table~ ENABLE KEYS */;
 UNLOCK TABLES;
+
 `
 	result := strings.ReplaceAll(buf.String(), "`", "~")
 	assert.Equal(t, expectedResult, result)
