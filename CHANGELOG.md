@@ -7,7 +7,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## [Unreleased]
 
 ### Added
-- `schema` parameter to table operations for more precise database handling
 
 ### Changed
 
@@ -16,9 +15,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Deprecated
 
 ### Removed
-- Unnecessary blank import in README.md
 
 ### Security
+
+## [1.2.0] - 2025-01-31
+
+### Added
+- `schema` parameter to table operations for more precise database handling
+
+### Removed
+- Unnecessary blank import in README.md
 
 ## [1.1.0] - 2024-05-28
 
