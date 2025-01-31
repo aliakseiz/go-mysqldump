@@ -113,11 +113,11 @@ func RunDump(t testing.TB, data *mysqldump.Data) {
 	mock.ExpectQuery(`^SHOW TABLES$`).WillReturnRows(showTablesRows)
 	mock.ExpectExec("^LOCK TABLES `Test_Table` READ /\\*!32311 LOCAL \\*/,`Test_View` READ /\\*!32311 LOCAL \\*/$").WillReturnResult(sqlmock.NewResult(1, 1))
 
-	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_name = \?`).WithArgs("Test_Table").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
+	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_schema = \? AND table_name = \?`).WithArgs("", "Test_Table").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
 	mock.ExpectQuery("^SHOW CREATE TABLE `Test_Table`$").WillReturnRows(createTableRows)
 	mock.ExpectQuery("^SELECT (.+) FROM `Test_Table`$").WillReturnRows(createTableValueRows)
 
-	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_name = \?`).WithArgs("Test_View").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("VIEW"))
+	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_schema = \? AND table_name = \?`).WithArgs("", "Test_View").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("VIEW"))
 	mock.ExpectQuery("^SHOW CREATE VIEW `Test_View`$").WillReturnRows(createViewRows)
 	mock.ExpectQuery("^SELECT (.+) FROM `Test_View`$").WillReturnRows(createTableValueRows)
 
@@ -180,11 +180,11 @@ func TestNoLockOk(t *testing.T) {
 	mock.ExpectQuery(`^SELECT version\(\)$`).WillReturnRows(serverVersionRows)
 	mock.ExpectQuery(`^SHOW TABLES$`).WillReturnRows(showTablesRows)
 
-	mock.ExpectQuery(`^SELECT table_type FROM information_schema.tables WHERE table_name = \?$`).WithArgs("Test_Table").WillReturnRows(tableTypeRows)
+	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_schema = \? AND table_name = \?`).WithArgs("", "Test_Table").WillReturnRows(tableTypeRows)
 	mock.ExpectQuery("^SHOW CREATE TABLE `Test_Table`$").WillReturnRows(createTableRows)
 	mock.ExpectQuery("^SELECT (.+) FROM `Test_Table`$").WillReturnRows(createTableValueRows)
 
-	mock.ExpectQuery(`^SELECT table_type FROM information_schema.tables WHERE table_name = \?$`).WithArgs("Test_View").WillReturnRows(tableTypeRows)
+	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_schema = \? AND table_name = \?`).WithArgs("", "Test_View").WillReturnRows(tableTypeRows)
 	mock.ExpectQuery("^SHOW CREATE VIEW `Test_View`$").WillReturnRows(createViewRows)
 	mock.ExpectRollback()
 

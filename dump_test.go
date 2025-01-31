@@ -125,14 +125,14 @@ func TestCreateTableSQLOk(t *testing.T) {
 	defer data.Close()
 
 	// Add expectation for table type check
-	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_name = \?`).WithArgs("Test_Table").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
+	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_schema = \? AND table_name = \?`).WithArgs("Test_Schema", "Test_Table").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
 
 	rows := sqlmock.NewRows([]string{"Table", "Create Table"}).
 		AddRow("Test_Table", "CREATE TABLE 'Test_Table' (`id` int(11) NOT NULL AUTO_INCREMENT,`s` char(60) DEFAULT NULL, PRIMARY KEY (`id`))ENGINE=InnoDB DEFAULT CHARSET=latin1")
 
 	mock.ExpectQuery("^SHOW CREATE TABLE `Test_Table`$").WillReturnRows(rows)
 
-	table, err := data.CreateTable("Test_Table")
+	table, err := data.CreateTable("Test_Schema", "Test_Table")
 	assert.NoError(t, err)
 
 	result, err := table.CreateSQL()
@@ -158,10 +158,10 @@ func TestCreateTableRowValues(t *testing.T) {
 		AddRow(1, "test@test.de", "Test Name 1").
 		AddRow(2, "test2@test.de", "Test Name 2")
 
-	mock.ExpectQuery("SELECT table_type FROM information_schema.tables WHERE table_name = ?").WithArgs("test").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
+	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_schema = \? AND table_name = \?`).WithArgs("Test_Schema", "test").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
 	mock.ExpectQuery("^SELECT (.+) FROM `test`$").WillReturnRows(rows)
 
-	table, err := data.CreateTable("test")
+	table, err := data.CreateTable("Test_Schema", "test")
 	assert.NoError(t, err)
 
 	assert.True(t, table.Next())
@@ -185,12 +185,12 @@ func TestCreateTableValuesSteam(t *testing.T) {
 		AddRow(1, "test@test.de", "Test Name 1").
 		AddRow(2, "test2@test.de", "Test Name 2")
 
-	mock.ExpectQuery("SELECT table_type FROM information_schema.tables WHERE table_name = ?").WithArgs("test").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
+	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_schema = \? AND table_name = \?`).WithArgs("Test_Schema", "test").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
 	mock.ExpectQuery("^SELECT (.+) FROM `test`$").WillReturnRows(rows)
 
 	data.MaxAllowedPacket = 4096
 
-	table, err := data.CreateTable("test")
+	table, err := data.CreateTable("Test_Schema", "test")
 	assert.NoError(t, err)
 
 	s := table.Stream()
@@ -210,12 +210,12 @@ func TestCreateTableValuesSteamSmallPackets(t *testing.T) {
 		AddRow(1, "test@test.de", "Test Name 1").
 		AddRow(2, "test2@test.de", "Test Name 2")
 
-	mock.ExpectQuery("SELECT table_type FROM information_schema.tables WHERE table_name = ?").WithArgs("test").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
+	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_schema = \? AND table_name = \?`).WithArgs("Test_Schema", "test").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
 	mock.ExpectQuery("^SELECT (.+) FROM `test`$").WillReturnRows(rows)
 
 	data.MaxAllowedPacket = 64
 
-	table, err := data.CreateTable("test")
+	table, err := data.CreateTable("Test_Schema", "test")
 	assert.NoError(t, err)
 
 	s := table.Stream()
@@ -237,10 +237,10 @@ func TestCreateTableAllValuesWithNil(t *testing.T) {
 		AddRow(2, "test2@test.de", "Test Name 2").
 		AddRow(3, "", "Test Name 3")
 
-	mock.ExpectQuery("SELECT table_type FROM information_schema.tables WHERE table_name = ?").WithArgs("test").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
+	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_schema = \? AND table_name = \?`).WithArgs("Test_Schema", "test").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
 	mock.ExpectQuery("^SELECT (.+) FROM `test`$").WillReturnRows(rows)
 
-	table, err := data.CreateTable("test")
+	table, err := data.CreateTable("Test_Schema", "test")
 	assert.NoError(t, err)
 
 	results := make([]string, 0)
@@ -268,7 +268,7 @@ func TestCreateTableOk(t *testing.T) {
 	defer data.Close()
 
 	// Add expectation for table type check
-	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_name = \?`).WithArgs("Test_Table").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
+	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_schema = \? AND table_name = \?`).WithArgs("Test_Schema", "Test_Table").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
 
 	createTableRows := sqlmock.NewRows([]string{"Table", "Create Table"}).
 		AddRow("Test_Table", "CREATE TABLE 'Test_Table' (`id` int(11) NOT NULL AUTO_INCREMENT,`s` char(60) DEFAULT NULL, PRIMARY KEY (`id`))ENGINE=InnoDB DEFAULT CHARSET=latin1")
@@ -287,7 +287,7 @@ func TestCreateTableOk(t *testing.T) {
 
 	assert.NoError(t, data.GetTemplates())
 
-	table, err := data.CreateTable("Test_Table")
+	table, err := data.CreateTable("Test_Schema", "Test_Table")
 	assert.NoError(t, err)
 
 	data.WriteTable(table) // nolint:errcheck
@@ -332,7 +332,7 @@ func TestCreateTableOkSmallPackets(t *testing.T) {
 	defer data.Close()
 
 	// Add expectation for table type check
-	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_name = \?`).WithArgs("Test_Table").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
+	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_schema = \? AND table_name = \?`).WithArgs("Test_Schema", "Test_Table").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
 
 	createTableRows := sqlmock.NewRows([]string{"Table", "Create Table"}).
 		AddRow("Test_Table", "CREATE TABLE 'Test_Table' (`id` int(11) NOT NULL AUTO_INCREMENT,`s` char(60) DEFAULT NULL, PRIMARY KEY (`id`))ENGINE=InnoDB DEFAULT CHARSET=latin1")
@@ -351,7 +351,7 @@ func TestCreateTableOkSmallPackets(t *testing.T) {
 
 	assert.NoError(t, data.GetTemplates())
 
-	table, err := data.CreateTable("Test_Table")
+	table, err := data.CreateTable("Test_Schema", "Test_Table")
 	assert.NoError(t, err)
 
 	data.WriteTable(table) // nolint:errcheck
