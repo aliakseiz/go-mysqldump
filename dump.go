@@ -202,7 +202,7 @@ func (data *Data) Dump() error {
 	}
 
 	for _, name := range tables {
-		if err = data.dumpTable(name); err != nil {
+		if err = data.dumpTable(data.DBName, name); err != nil {
 			return err
 		}
 	}
@@ -233,12 +233,12 @@ func (data *Data) rollback() error {
 	return data.tx.Rollback()
 }
 
-func (data *Data) dumpTable(name string) error {
+func (data *Data) dumpTable(schema, name string) error {
 	if data.err != nil {
 		return data.err
 	}
 
-	table, err := data.CreateTable(name)
+	table, err := data.CreateTable(schema, name)
 	if err != nil {
 		return err
 	}
@@ -326,7 +326,7 @@ func (meta *MetaData) UpdateServerVersion(data *Data) (err error) {
 }
 
 // CreateTable initializes a Table struct.
-func (data *Data) CreateTable(name string) (*Table, error) {
+func (data *Data) CreateTable(schema, name string) (*Table, error) {
 	table := &Table{
 		Name: name,
 		data: data,
@@ -334,7 +334,7 @@ func (data *Data) CreateTable(name string) (*Table, error) {
 
 	var tableType string
 
-	err := data.tx.QueryRow("SELECT table_type FROM information_schema.tables WHERE table_name = ?", name).Scan(&tableType)
+	err := data.tx.QueryRow("SELECT table_type FROM information_schema.tables WHERE table_schema = ? AND table_name = ?", schema, name).Scan(&tableType)
 	if err != nil {
 		return nil, err
 	}
