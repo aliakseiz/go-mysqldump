@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ### Security
 
+## [1.3.0] - 2025-10-23
+
+### Fixed
+- Empty schema name is correctly handled by using the current database
+
 ## [1.2.0] - 2025-01-31
 
 ### Added

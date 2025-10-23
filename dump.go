@@ -334,7 +334,21 @@ func (data *Data) CreateTable(schema, name string) (*Table, error) {
 
 	var tableType string
 
-	err := data.tx.QueryRow("SELECT table_type FROM information_schema.tables WHERE table_schema = ? AND table_name = ?", schema, name).Scan(&tableType)
+	// If schema is empty, get the current database
+	actualSchema := schema
+	if actualSchema == "" {
+		var currentDB sql.NullString
+		err := data.tx.QueryRow("SELECT DATABASE()").Scan(&currentDB)
+		if err != nil {
+			return nil, err
+		}
+		if !currentDB.Valid || currentDB.String == "" {
+			return nil, errors.New("no database selected")
+		}
+		actualSchema = currentDB.String
+	}
+
+	err := data.tx.QueryRow("SELECT table_type FROM information_schema.tables WHERE table_schema = ? AND table_name = ?", actualSchema, name).Scan(&tableType)
 	if err != nil {
 		return nil, err
 	}

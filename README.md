@@ -71,6 +71,8 @@ func main() {
 
 ```
 
+> **Note:** The `DBName` parameter is optional. If omitted, the dumper uses the database specified in the connection string and excludes `DROP DATABASE` / `CREATE DATABASE` statements from the dump.
+
 [License-Url]: http://opensource.org/licenses/MIT
 [License-Image]: https://img.shields.io/npm/l/express.svg
 
