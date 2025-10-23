@@ -107,17 +107,26 @@ func RunDump(t testing.TB, data *mysqldump.Data) {
 	createViewRows := sqlmock.NewRows([]string{"View", "Create View"}).
 		AddRow("Test_View", "CREATE VIEW 'Test_View' AS SELECT `id`, `email`, `name` FROM 'Test_Table'")
 
+	databaseRows := sqlmock.NewRows([]string{"DATABASE()"}).
+		AddRow("test_db")
+
 	mock.ExpectBegin()
 
 	mock.ExpectQuery(`^SELECT version\(\)$`).WillReturnRows(serverVersionRows)
 	mock.ExpectQuery(`^SHOW TABLES$`).WillReturnRows(showTablesRows)
 	mock.ExpectExec("^LOCK TABLES `Test_Table` READ /\\*!32311 LOCAL \\*/,`Test_View` READ /\\*!32311 LOCAL \\*/$").WillReturnResult(sqlmock.NewResult(1, 1))
 
-	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_schema = \? AND table_name = \?`).WithArgs("", "Test_Table").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
+	// Expect DATABASE() query for Test_Table
+	mock.ExpectQuery("^SELECT DATABASE\\(\\)$").WillReturnRows(databaseRows)
+	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_schema = \? AND table_name = \?`).WithArgs("test_db", "Test_Table").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
 	mock.ExpectQuery("^SHOW CREATE TABLE `Test_Table`$").WillReturnRows(createTableRows)
 	mock.ExpectQuery("^SELECT (.+) FROM `Test_Table`$").WillReturnRows(createTableValueRows)
 
-	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_schema = \? AND table_name = \?`).WithArgs("", "Test_View").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("VIEW"))
+	// Expect DATABASE() query for Test_View
+	databaseRows2 := sqlmock.NewRows([]string{"DATABASE()"}).
+		AddRow("test_db")
+	mock.ExpectQuery("^SELECT DATABASE\\(\\)$").WillReturnRows(databaseRows2)
+	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_schema = \? AND table_name = \?`).WithArgs("test_db", "Test_View").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("VIEW"))
 	mock.ExpectQuery("^SHOW CREATE VIEW `Test_View`$").WillReturnRows(createViewRows)
 	mock.ExpectQuery("^SELECT (.+) FROM `Test_View`$").WillReturnRows(createTableValueRows)
 
@@ -171,20 +180,24 @@ func TestNoLockOk(t *testing.T) {
 	createViewRows := sqlmock.NewRows([]string{"View", "Create View"}).
 		AddRow("Test_View", "CREATE VIEW 'Test_View' AS SELECT `id`, `email`, `name` FROM 'Test_Table'")
 
-	// Add expectation for table type check
-	tableTypeRows := sqlmock.NewRows([]string{"table_type"}).
-		AddRow("BASE TABLE").
-		AddRow("VIEW")
+	databaseRows := sqlmock.NewRows([]string{"DATABASE()"}).
+		AddRow("test_db")
 
 	mock.ExpectBegin()
 	mock.ExpectQuery(`^SELECT version\(\)$`).WillReturnRows(serverVersionRows)
 	mock.ExpectQuery(`^SHOW TABLES$`).WillReturnRows(showTablesRows)
 
-	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_schema = \? AND table_name = \?`).WithArgs("", "Test_Table").WillReturnRows(tableTypeRows)
+	// Expect DATABASE() query for Test_Table
+	mock.ExpectQuery("^SELECT DATABASE\\(\\)$").WillReturnRows(databaseRows)
+	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_schema = \? AND table_name = \?`).WithArgs("test_db", "Test_Table").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
 	mock.ExpectQuery("^SHOW CREATE TABLE `Test_Table`$").WillReturnRows(createTableRows)
 	mock.ExpectQuery("^SELECT (.+) FROM `Test_Table`$").WillReturnRows(createTableValueRows)
 
-	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_schema = \? AND table_name = \?`).WithArgs("", "Test_View").WillReturnRows(tableTypeRows)
+	// Expect DATABASE() query for Test_View
+	databaseRows2 := sqlmock.NewRows([]string{"DATABASE()"}).
+		AddRow("test_db")
+	mock.ExpectQuery("^SELECT DATABASE\\(\\)$").WillReturnRows(databaseRows2)
+	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_schema = \? AND table_name = \?`).WithArgs("test_db", "Test_View").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("VIEW"))
 	mock.ExpectQuery("^SHOW CREATE VIEW `Test_View`$").WillReturnRows(createViewRows)
 	mock.ExpectRollback()
 

@@ -388,3 +388,140 @@ UNLOCK TABLES;
 	result := strings.ReplaceAll(buf.String(), "`", "~")
 	assert.Equal(t, expectedResult, result)
 }
+
+func TestCreateTableWithEmptySchemaOk(t *testing.T) {
+	data, mock, err := getMockData()
+	assert.NoError(t, err, "an error was not expected when opening a stub database connection")
+
+	defer data.Close()
+
+	// Mock the DATABASE() query that should be called when schema is empty
+	databaseRows := sqlmock.NewRows([]string{"DATABASE()"}).
+		AddRow("current_db")
+
+	mock.ExpectQuery("^SELECT DATABASE\\(\\)$").WillReturnRows(databaseRows)
+
+	// Add expectation for table type check with the retrieved database name
+	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_schema = \? AND table_name = \?`).
+		WithArgs("current_db", "Test_Table").
+		WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
+
+	// Call CreateTable with empty schema (simulating empty DBName)
+	table, err := data.CreateTable("", "Test_Table")
+	assert.NoError(t, err)
+	assert.NotNil(t, table)
+	assert.Equal(t, "Test_Table", table.Name)
+	assert.False(t, table.IsView)
+
+	// we make sure that all expectations were met
+	assert.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
+}
+
+func TestCreateTableWithEmptySchemaAndNoDatabase(t *testing.T) {
+	data, mock, err := getMockData()
+	assert.NoError(t, err, "an error was not expected when opening a stub database connection")
+
+	defer data.Close()
+
+	// Mock the DATABASE() query returning NULL (no database selected)
+	databaseRows := sqlmock.NewRows([]string{"DATABASE()"}).
+		AddRow(nil)
+
+	mock.ExpectQuery("^SELECT DATABASE\\(\\)$").WillReturnRows(databaseRows)
+
+	// Call CreateTable with empty schema when no database is selected
+	table, err := data.CreateTable("", "Test_Table")
+	assert.Error(t, err)
+	assert.Nil(t, table)
+	assert.EqualError(t, err, "no database selected")
+
+	// we make sure that all expectations were met
+	assert.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
+}
+
+func TestCreateViewWithEmptySchemaOk(t *testing.T) {
+	data, mock, err := getMockData()
+	assert.NoError(t, err, "an error was not expected when opening a stub database connection")
+
+	defer data.Close()
+
+	// Mock the DATABASE() query that should be called when schema is empty
+	databaseRows := sqlmock.NewRows([]string{"DATABASE()"}).
+		AddRow("current_db")
+
+	mock.ExpectQuery("^SELECT DATABASE\\(\\)$").WillReturnRows(databaseRows)
+
+	// Add expectation for table type check - this time it's a VIEW
+	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_schema = \? AND table_name = \?`).
+		WithArgs("current_db", "Test_View").
+		WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("VIEW"))
+
+	// Call CreateTable with empty schema (simulating empty DBName)
+	table, err := data.CreateTable("", "Test_View")
+	assert.NoError(t, err)
+	assert.NotNil(t, table)
+	assert.Equal(t, "Test_View", table.Name)
+	assert.True(t, table.IsView)
+
+	// we make sure that all expectations were met
+	assert.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
+}
+
+func TestDumpWithEmptyDBName(t *testing.T) {
+	var buf bytes.Buffer
+
+	data := &mysqldump.Data{
+		Out:        &buf,
+		LockTables: true,
+		DBName:     "", // Empty DBName - the scenario from the issue
+	}
+
+	db, mock, err := sqlmock.New()
+	assert.NoError(t, err, "an error was not expected when opening a stub database connection")
+
+	defer db.Close()
+
+	data.Connection = db
+
+	showTablesRows := sqlmock.NewRows([]string{"Tables_in_Testdb"}).
+		AddRow("Test_Table")
+
+	serverVersionRows := sqlmock.NewRows([]string{"Version()"}).
+		AddRow("test_version")
+
+	createTableRows := sqlmock.NewRows([]string{"Table", "Create Table"}).
+		AddRow("Test_Table", "CREATE TABLE 'Test_Table' (`id` int(11) NOT NULL AUTO_INCREMENT, PRIMARY KEY (`id`))ENGINE=InnoDB DEFAULT CHARSET=latin1")
+
+	createTableValueRows := sqlmock.NewRows([]string{"id"}).
+		AddRow(1).
+		AddRow(2)
+
+	databaseRows := sqlmock.NewRows([]string{"DATABASE()"}).
+		AddRow("mydb")
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`^SELECT version\(\)$`).WillReturnRows(serverVersionRows)
+	mock.ExpectQuery(`^SHOW TABLES$`).WillReturnRows(showTablesRows)
+	mock.ExpectExec("^LOCK TABLES `Test_Table` READ /\\*!32311 LOCAL \\*/$").WillReturnResult(sqlmock.NewResult(1, 1))
+
+	// When DBName is empty, DATABASE() should be called
+	mock.ExpectQuery("^SELECT DATABASE\\(\\)$").WillReturnRows(databaseRows)
+	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_schema = \? AND table_name = \?`).
+		WithArgs("mydb", "Test_Table").
+		WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
+	mock.ExpectQuery("^SHOW CREATE TABLE `Test_Table`$").WillReturnRows(createTableRows)
+	mock.ExpectQuery("^SELECT (.+) FROM `Test_Table`$").WillReturnRows(createTableValueRows)
+
+	mock.ExpectRollback()
+
+	assert.NoError(t, data.Dump(), "an error was not expected when dumping with empty DBName")
+
+	// Verify the output doesn't contain DROP DATABASE / CREATE DATABASE statements
+	result := buf.String()
+	assert.NotContains(t, result, "DROP DATABASE")
+	assert.NotContains(t, result, "CREATE DATABASE")
+	assert.Contains(t, result, "DROP TABLE IF EXISTS `Test_Table`")
+
+	// we make sure that all expectations were met
+	assert.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
+}

@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Changed
 
 ### Fixed
+- Empty schema name is correctly handled by using the current database
 
 ### Deprecated
 
