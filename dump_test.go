@@ -64,7 +64,7 @@ func TestIgnoreTablesOk(t *testing.T) {
 
 	mock.ExpectQuery("^SHOW TABLES$").WillReturnRows(rows)
 
-	data.IgnoreTables = []string{"Test_Table_1"}
+	data.IgnoreTables = map[string]struct{}{"Test_Table_1": {}}
 
 	result, err := data.GetTables()
 	assert.NoError(t, err)

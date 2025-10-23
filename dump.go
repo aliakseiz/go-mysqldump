@@ -21,7 +21,7 @@ import (
 type Data struct {
 	Out              io.Writer
 	Connection       *sql.DB
-	IgnoreTables     []string // TODO store in a map
+	IgnoreTables     map[string]struct{}
 	MaxAllowedPacket int
 	LockTables       bool
 	DBName           string
@@ -306,10 +306,9 @@ func (data *Data) GetTables() ([]string, error) {
 }
 
 func (data *Data) isIgnoredTable(name string) bool {
-	for _, item := range data.IgnoreTables {
-		if item == name {
-			return true
-		}
+	_, ok := data.IgnoreTables[name]
+	if ok {
+		return true
 	}
 
 	return false
