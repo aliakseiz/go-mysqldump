@@ -6,15 +6,23 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## BREAKING CHANGES
+- Module path is `github.com/aliakseiz/go-mysqldump/v2`
+- Methods that query the database take a `context.Context` as first parameter. All queries use the context, so a dump can be cancelled or time-limited
+
 ### Added
 
 ### Changed
+- `UNLOCK TABLES` still runs after the context is cancelled
+- Failing `SHOW CREATE` no longer leaves a half-written table header in the output
 - `IgnoreTables` uses map instead of slice
 - Errors from `database/sql`, `os` and `text/template` are wrapped with context
 - `Close` returns the error as well as the connection
 - Updated Go to 1.27
 
 ### Fixed
+- Failed `SELECT` produced a truncated table and a successful `Dump`
+- `Stream` goroutine stayed blocked forever when the output writer failed
 - Linter warnings
 - Outdated example in `doc.go`
 

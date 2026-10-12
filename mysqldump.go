@@ -1,6 +1,7 @@
 package mysqldump
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -50,11 +51,11 @@ func Register(db *sql.DB, dir, format, database string) (*Data, error) {
 }
 
 // Dump Creates a MYSQL dump from the connection to the stream.
-func Dump(db *sql.DB, out io.Writer) error {
+func Dump(ctx context.Context, db *sql.DB, out io.Writer) error {
 	return (&Data{
 		Connection: db,
 		Out:        out,
-	}).Dump()
+	}).Dump(ctx)
 }
 
 // Close the dumper.

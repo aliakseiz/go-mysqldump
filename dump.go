@@ -49,6 +49,14 @@ type Table struct {
 	values []any
 }
 
+// tableView is the data the table template renders.
+type tableView struct {
+	NameEsc   string
+	IsView    bool
+	CreateSQL string
+	Stream    <-chan string
+}
+
 // MetaData struct contains variables for header and footer templates.
 type MetaData struct {
 	DumpVersion   string
@@ -141,8 +149,8 @@ var (
 )
 
 // Dump data using struct.
-func (data *Data) Dump() error {
-	err := data.start()
+func (data *Data) Dump(ctx context.Context) error {
+	err := data.start(ctx)
 	if err != nil {
 		return err
 	}
@@ -150,23 +158,23 @@ func (data *Data) Dump() error {
 	// The transaction is read-only, so a rollback error carries no information.
 	defer data.rollback() //nolint:errcheck // read-only transaction
 
-	meta, err := data.writeHeader()
+	meta, err := data.writeHeader(ctx)
 	if err != nil {
 		return err
 	}
 
-	tables, err := data.GetTables()
+	tables, err := data.GetTables(ctx)
 	if err != nil {
 		return err
 	}
 
-	unlock, err := data.lockTables(tables)
+	unlock, err := data.lockTables(ctx, tables)
 	if err != nil {
 		return err
 	}
 	defer unlock()
 
-	err = data.dumpTables(tables)
+	err = data.dumpTables(ctx, tables)
 	if err != nil {
 		return err
 	}
@@ -182,8 +190,8 @@ func (data *Data) Dump() error {
 }
 
 // Begin starts a read-only transaction that will be whatever the database was when it was called.
-func (data *Data) Begin() error {
-	tx, err := data.Connection.BeginTx(context.Background(), &sql.TxOptions{
+func (data *Data) Begin(ctx context.Context) error {
+	tx, err := data.Connection.BeginTx(ctx, &sql.TxOptions{
 		Isolation: sql.LevelRepeatableRead,
 		ReadOnly:  true,
 	})
@@ -197,10 +205,40 @@ func (data *Data) Begin() error {
 }
 
 // WriteTable fills table template with provided *table data.
-func (data *Data) WriteTable(table *Table) error {
-	err := data.tableTmpl.Execute(data.Out, table)
+// The context bounds the table queries. When the template fails or the context ends, row streaming is stopped
+// and finished before WriteTable returns.
+func (data *Data) WriteTable(ctx context.Context, table *Table) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	view := tableView{
+		NameEsc: table.NameEsc(),
+		IsView:  table.IsView,
+	}
+
+	var err error
+
+	view.CreateSQL, err = table.CreateSQL(ctx)
 	if err != nil {
-		return fmt.Errorf("write table %s: %w", table.Name, err)
+		return err
+	}
+
+	if !table.IsView {
+		view.Stream = table.Stream(ctx)
+	}
+
+	execErr := data.tableTmpl.Execute(data.Out, view)
+
+	// Stop and wait for the producer: it touches table.Err and the rows, which Dump releases right after.
+	cancel()
+
+	if view.Stream != nil {
+		for range view.Stream {
+		}
+	}
+
+	if execErr != nil {
+		return fmt.Errorf("write table %s: %w", table.Name, execErr)
 	}
 
 	return table.Err
@@ -234,10 +272,10 @@ func (data *Data) GetTemplates() error {
 }
 
 // GetTables returns database tables.
-func (data *Data) GetTables() ([]string, error) {
+func (data *Data) GetTables(ctx context.Context) ([]string, error) {
 	tables := make([]string, 0)
 
-	rows, err := data.tx.Query("SHOW TABLES")
+	rows, err := data.tx.QueryContext(ctx, "SHOW TABLES")
 	if err != nil {
 		return tables, fmt.Errorf("show tables: %w", err)
 	}
@@ -266,7 +304,7 @@ func (data *Data) GetTables() ([]string, error) {
 }
 
 // CreateTable initializes a Table struct.
-func (data *Data) CreateTable(schema, name string) (*Table, error) {
+func (data *Data) CreateTable(ctx context.Context, schema, name string) (*Table, error) {
 	table := &Table{
 		Name: name,
 		data: data,
@@ -279,7 +317,7 @@ func (data *Data) CreateTable(schema, name string) (*Table, error) {
 	if actualSchema == "" {
 		var currentDB sql.NullString
 
-		err := data.tx.QueryRow("SELECT DATABASE()").Scan(&currentDB)
+		err := data.tx.QueryRowContext(ctx, "SELECT DATABASE()").Scan(&currentDB)
 		if err != nil {
 			return nil, fmt.Errorf("get current database: %w", err)
 		}
@@ -291,7 +329,8 @@ func (data *Data) CreateTable(schema, name string) (*Table, error) {
 		actualSchema = currentDB.String
 	}
 
-	err := data.tx.QueryRow(
+	err := data.tx.QueryRowContext(
+		ctx,
 		"SELECT table_type FROM information_schema.tables WHERE table_schema = ? AND table_name = ?",
 		actualSchema, name,
 	).Scan(&tableType)
@@ -307,7 +346,7 @@ func (data *Data) CreateTable(schema, name string) (*Table, error) {
 }
 
 // start applies defaults, parses templates, and opens the transaction.
-func (data *Data) start() error {
+func (data *Data) start(ctx context.Context) error {
 	if data.MaxAllowedPacket == 0 {
 		data.MaxAllowedPacket = defaultMaxAllowedPacket
 	}
@@ -320,16 +359,16 @@ func (data *Data) start() error {
 	// Start the read-only transaction. The caller defers the rollback until the end.
 	// This way the database will have the exact state it did at the beginning of
 	// the backup, and nothing can be accidentally committed.
-	return data.Begin()
+	return data.Begin(ctx)
 }
 
 // writeHeader writes the dump header and, when DBName is set, the database recreate section.
-func (data *Data) writeHeader() (MetaData, error) {
+func (data *Data) writeHeader(ctx context.Context) (MetaData, error) {
 	meta := MetaData{
 		DumpVersion: Version,
 	}
 
-	err := meta.UpdateServerVersion(data)
+	err := meta.UpdateServerVersion(ctx, data)
 	if err != nil {
 		return meta, err
 	}
@@ -350,7 +389,7 @@ func (data *Data) writeHeader() (MetaData, error) {
 }
 
 // lockTables locks all tables for reading when LockTables is set and returns the function releasing the locks.
-func (data *Data) lockTables(tables []string) (func(), error) {
+func (data *Data) lockTables(ctx context.Context, tables []string) (func(), error) {
 	if !data.LockTables || len(tables) == 0 {
 		return func() {}, nil
 	}
@@ -367,19 +406,22 @@ func (data *Data) lockTables(tables []string) (func(), error) {
 		buf.WriteString("`" + name + "` READ /*!32311 LOCAL */")
 	}
 
-	_, err := data.Connection.Exec(buf.String())
+	_, err := data.Connection.ExecContext(ctx, buf.String())
 	if err != nil {
 		return nil, fmt.Errorf("lock tables: %w", err)
 	}
 
+	// The locks must be released even when ctx is already cancelled.
+	unlockCtx := context.WithoutCancel(ctx)
+
 	return func() {
-		_, _ = data.Connection.Exec("UNLOCK TABLES")
+		_, _ = data.Connection.ExecContext(unlockCtx, "UNLOCK TABLES")
 	}, nil
 }
 
-func (data *Data) dumpTables(tables []string) error {
+func (data *Data) dumpTables(ctx context.Context, tables []string) error {
 	for _, name := range tables {
-		err := data.dumpTable(data.DBName, name)
+		err := data.dumpTable(ctx, data.DBName, name)
 		if err != nil {
 			return err
 		}
@@ -398,17 +440,17 @@ func (data *Data) rollback() error {
 	return nil
 }
 
-func (data *Data) dumpTable(schema, name string) error {
+func (data *Data) dumpTable(ctx context.Context, schema, name string) error {
 	if data.err != nil {
 		return data.err
 	}
 
-	table, err := data.CreateTable(schema, name)
+	table, err := data.CreateTable(ctx, schema, name)
 	if err != nil {
 		return err
 	}
 
-	return data.WriteTable(table)
+	return data.WriteTable(ctx, table)
 }
 
 func (data *Data) isIgnoredTable(name string) bool {
@@ -418,10 +460,10 @@ func (data *Data) isIgnoredTable(name string) bool {
 }
 
 // UpdateServerVersion fetches server version and stores it in Data.
-func (meta *MetaData) UpdateServerVersion(data *Data) error {
+func (meta *MetaData) UpdateServerVersion(ctx context.Context, data *Data) error {
 	var serverVersion sql.NullString
 
-	err := data.tx.QueryRow("SELECT version()").Scan(&serverVersion)
+	err := data.tx.QueryRowContext(ctx, "SELECT version()").Scan(&serverVersion)
 	meta.ServerVersion = serverVersion.String
 
 	if err != nil {
@@ -437,7 +479,7 @@ func (table *Table) NameEsc() string {
 }
 
 // CreateSQL returns the CREATE statement of the table or view.
-func (table *Table) CreateSQL() (string, error) {
+func (table *Table) CreateSQL(ctx context.Context) (string, error) {
 	var (
 		nameReturn, createSQL sql.NullString
 		createSQLQuery        string
@@ -449,7 +491,7 @@ func (table *Table) CreateSQL() (string, error) {
 		createSQLQuery = "SHOW CREATE TABLE " + table.NameEsc()
 	}
 
-	err := table.data.tx.QueryRow(createSQLQuery).Scan(&nameReturn, &createSQL)
+	err := table.data.tx.QueryRowContext(ctx, createSQLQuery).Scan(&nameReturn, &createSQL)
 	if err != nil {
 		return "", fmt.Errorf("get create statement of table %s: %w", table.Name, err)
 	}
@@ -462,15 +504,18 @@ func (table *Table) CreateSQL() (string, error) {
 }
 
 // Init runs the table SELECT and prepares scan targets according to the column types.
-func (table *Table) Init() error {
+func (table *Table) Init(ctx context.Context) error {
 	if len(table.values) != 0 {
 		return errDoubleInit
 	}
 
 	var err error
 
+	// Identifiers cannot be bound as query parameters; a dump needs every column.
+	selectQuery := "SELECT * FROM " + table.NameEsc() //nolint:gosec,unqueryvet // table name comes from SHOW TABLES
+
 	//nolint:rowserrcheck // rows are iterated and closed in Next
-	table.rows, err = table.data.tx.Query(fmt.Sprintf("SELECT * FROM %s", table.NameEsc()))
+	table.rows, err = table.data.tx.QueryContext(ctx, selectQuery)
 	if err != nil {
 		return fmt.Errorf("select from table %s: %w", table.Name, err)
 	}
@@ -520,9 +565,9 @@ func scanTargetType(columnType *sql.ColumnType) reflect.Type {
 }
 
 // Next advances to the next row and scans it into the table values. Failures are stored in Table.Err.
-func (table *Table) Next() bool {
+func (table *Table) Next(ctx context.Context) bool {
 	if table.rows == nil {
-		err := table.Init()
+		err := table.Init(ctx)
 		if err != nil {
 			table.Err = err
 
@@ -531,12 +576,7 @@ func (table *Table) Next() bool {
 	}
 	// Fallthrough
 	if !table.rows.Next() {
-		err := table.rows.Close()
-		if err != nil {
-			table.Err = fmt.Errorf("close rows of table %s: %w", table.Name, err)
-		}
-
-		table.rows = nil
+		table.finishRows()
 
 		return false
 	}
@@ -544,13 +584,6 @@ func (table *Table) Next() bool {
 	err := table.rows.Scan(table.values...)
 	if err != nil {
 		table.Err = fmt.Errorf("scan row of table %s: %w", table.Name, err)
-
-		return false
-	}
-
-	err = table.rows.Err()
-	if err != nil {
-		table.Err = fmt.Errorf("iterate rows of table %s: %w", table.Name, err)
 
 		return false
 	}
@@ -611,7 +644,8 @@ func writeValue(buf *bytes.Buffer, value any) {
 }
 
 // Stream returns a channel of INSERT statements batching rows up to MaxAllowedPacket.
-func (table *Table) Stream() <-chan string {
+// The channel is closed when the rows are exhausted, a row fails or ctx ends. The failure is stored in Table.Err.
+func (table *Table) Stream(ctx context.Context) <-chan string {
 	valueOut := make(chan string, 1)
 
 	go func() {
@@ -619,13 +653,15 @@ func (table *Table) Stream() <-chan string {
 
 		var insert bytes.Buffer
 
-		for table.Next() {
+		for table.Next(ctx) {
 			row := table.RowBuffer()
 			// Truncate our insert if it won't fit
 			if insert.Len() != 0 && insert.Len()+row.Len() > table.data.MaxAllowedPacket-1 {
 				insert.WriteString(";")
 
-				valueOut <- insert.String()
+				if !table.send(ctx, valueOut, insert.String()) {
+					return
+				}
 
 				insert.Reset()
 			}
@@ -642,7 +678,7 @@ func (table *Table) Stream() <-chan string {
 		if insert.Len() != 0 {
 			insert.WriteString(";")
 
-			valueOut <- insert.String()
+			table.send(ctx, valueOut, insert.String())
 		}
 	}()
 
@@ -652,4 +688,31 @@ func (table *Table) Stream() <-chan string {
 // SetData assigns the data pointer to the table.
 func (table *Table) SetData(data *Data) {
 	table.data = data
+}
+
+// finishRows records the iteration error, if any, and closes the rows.
+func (table *Table) finishRows() {
+	err := table.rows.Err()
+	if err != nil {
+		table.Err = fmt.Errorf("iterate rows of table %s: %w", table.Name, err)
+	}
+
+	err = table.rows.Close()
+	if err != nil && table.Err == nil {
+		table.Err = fmt.Errorf("close rows of table %s: %w", table.Name, err)
+	}
+
+	table.rows = nil
+}
+
+// send delivers a statement unless ctx ends first, in which case the cancellation is stored in Table.Err.
+func (table *Table) send(ctx context.Context, out chan<- string, statement string) bool {
+	select {
+	case out <- statement:
+		return true
+	case <-ctx.Done():
+		table.Err = fmt.Errorf("stream table %s: %w", table.Name, ctx.Err())
+
+		return false
+	}
 }

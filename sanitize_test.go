@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/aliakseiz/go-mysqldump"
+	"github.com/aliakseiz/go-mysqldump/v2"
 )
 
 func TestForSQLInjection(t *testing.T) {

@@ -25,10 +25,11 @@ Fork from [JamesStewy/go-mysqldump](https://github.com/JamesStewy/go-mysqldump).
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 
-	"github.com/aliakseiz/go-mysqldump"
+	"github.com/aliakseiz/go-mysqldump/v2"
 	"github.com/go-sql-driver/mysql"
 )
 
@@ -58,7 +59,7 @@ func main() {
 		return
 	}
 	// Dump database to file
-	if err = dumper.Dump(); err != nil {
+	if err = dumper.Dump(context.Background()); err != nil {
 		fmt.Println("Error dumping:", err)
 		
 		return
@@ -78,8 +79,5 @@ func main() {
 
 [Stability-Status-Image]: http://badges.github.io/stability-badges/dist/experimental.svg
 
-[Godoc-Url]: https://pkg.go.dev/mod/github.com/aliakseiz/go-mysqldump
+[Godoc-Url]: https://pkg.go.dev/mod/github.com/aliakseiz/go-mysqldump/v2
 [Godoc-Image]: https://godoc.org/github.com/aliakseiz/go-mysqldump?status.svg
-
-[ReportCard-Url]: https://goreportcard.com/report/github.com/aliakseiz/go-mysqldump
-[ReportCard-Image]: https://goreportcard.com/badge/github.com/aliakseiz/go-mysqldump

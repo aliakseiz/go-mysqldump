@@ -8,9 +8,10 @@ This example uses the mysql driver (https://github.com/go-sql-driver/mysql) to c
 	package main
 
 	import (
+		"context"
 		"database/sql"
 	    "fmt"
-	    "github.com/JamesStewy/go-mysqldump"
+	    "github.com/aliakseiz/go-mysqldump/v2"
 	    "github.com/go-sql-driver/mysql"
 	)
 
@@ -39,7 +40,7 @@ This example uses the mysql driver (https://github.com/go-sql-driver/mysql) to c
 	    }
 
 	    // Dump database to file.
-	    if err = dumper.Dump(); err != nil {
+	    if err = dumper.Dump(context.Background()); err != nil {
 	        fmt.Println("Error dumping:", err)
 	        return
 	    }

@@ -1,4 +1,4 @@
-module github.com/aliakseiz/go-mysqldump
+module github.com/aliakseiz/go-mysqldump/v2
 
 go 1.27
 

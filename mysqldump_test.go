@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/aliakseiz/go-mysqldump"
+	"github.com/aliakseiz/go-mysqldump/v2"
 	"github.com/stretchr/testify/require"
 )
 
@@ -134,7 +134,7 @@ func RunDump(tb testing.TB, data *mysqldump.Data) {
 
 	mock.ExpectRollback()
 
-	require.NoError(tb, data.Dump(), "an error was not expected when dumping a stub database connection")
+	require.NoError(tb, data.Dump(tb.Context()), "an error was not expected when dumping a stub database connection")
 }
 
 func TestDumpOk(t *testing.T) {
@@ -207,7 +207,7 @@ func TestNoLockOk(t *testing.T) {
 	mock.ExpectQuery("^SHOW CREATE VIEW `Test_View`$").WillReturnRows(createViewRows)
 	mock.ExpectRollback()
 
-	require.NoError(t, data.Dump(), "an error was not expected when dumping a stub database connection")
+	require.NoError(t, data.Dump(t.Context()), "an error was not expected when dumping a stub database connection")
 
 	result := strings.ReplaceAll(strings.Split(buf.String(), "-- Dump completed")[0], "`", "~")
 
