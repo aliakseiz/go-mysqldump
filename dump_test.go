@@ -1266,6 +1266,52 @@ func TestTable_Init(t *testing.T) {
 
 		require.NoError(t, table.Init(t.Context()))
 		require.ErrorContains(t, table.Init(t.Context()), "cannot init twice")
+
+		require.True(t, table.Next(t.Context()), "rejected init keeps the iteration going")
+		require.False(t, table.Next(t.Context()))
+		require.NoError(t, table.Err)
+		require.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
+	})
+
+	t.Run("no columns closes the rows", func(t *testing.T) {
+		t.Parallel()
+
+		data, mock := newMockData(t)
+		mock.ExpectQuery(selectAll("t")).WillReturnRows(sqlmock.NewRows([]string{})).RowsWillBeClosed()
+
+		table := &mysqldump.Table{Name: "t"}
+		table.SetData(data)
+
+		require.ErrorContains(t, table.Init(t.Context()), "no columns in table")
+		require.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
+	})
+
+	t.Run("failed init makes next return false without querying", func(t *testing.T) {
+		t.Parallel()
+
+		data, mock := newMockData(t)
+		mock.ExpectQuery(selectAll("t")).WillReturnError(errBoom)
+
+		table := &mysqldump.Table{Name: "t"}
+		table.SetData(data)
+
+		require.ErrorIs(t, table.Init(t.Context()), errBoom)
+		require.False(t, table.Next(t.Context()))
+		require.NoError(t, table.Err)
+		require.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
+	})
+
+	t.Run("fails after next finished the table", func(t *testing.T) {
+		t.Parallel()
+
+		data, mock := newMockData(t)
+		mock.ExpectQuery(selectAll("t")).WillReturnRows(sqlmock.NewRows([]string{})).RowsWillBeClosed()
+
+		table := &mysqldump.Table{Name: "t"}
+		table.SetData(data)
+
+		require.False(t, table.Next(t.Context()))
+		require.ErrorContains(t, table.Init(t.Context()), "cannot init twice")
 		require.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
 	})
 
@@ -1296,6 +1342,25 @@ func TestTable_Next(t *testing.T) {
 		require.ErrorContains(t, table.Err, "scan row of table t")
 	})
 
+	t.Run("scan error closes the rows", func(t *testing.T) {
+		t.Parallel()
+
+		data, mock := newMockData(t)
+		expectTableType(mock, testSchema, "t", "BASE TABLE")
+
+		rows := sqlmock.NewRowsWithColumnDefinition(sqlmock.NewColumn("c").OfType("INT", int64(0))).AddRow("abc")
+		mock.ExpectQuery(selectAll("t")).WillReturnRows(rows).RowsWillBeClosed()
+
+		table, err := data.CreateTable(t.Context(), testSchema, "t")
+		require.NoError(t, err)
+
+		require.False(t, table.Next(t.Context()))
+		require.ErrorContains(t, table.Err, "scan row of table t")
+		require.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
+
+		require.False(t, table.Next(t.Context()), "table stays finished after the scan error")
+	})
+
 	t.Run("select error is stored", func(t *testing.T) {
 		t.Parallel()
 
@@ -1307,6 +1372,37 @@ func TestTable_Next(t *testing.T) {
 
 		require.False(t, table.Next(t.Context()))
 		require.ErrorIs(t, table.Err, errBoom)
+	})
+
+	t.Run("failed init is final", func(t *testing.T) {
+		t.Parallel()
+
+		data, mock := newMockData(t)
+		mock.ExpectQuery(selectAll("t")).WillReturnRows(sqlmock.NewRows([]string{})).RowsWillBeClosed()
+
+		table := &mysqldump.Table{Name: "t"}
+		table.SetData(data)
+
+		require.False(t, table.Next(t.Context()))
+		require.ErrorContains(t, table.Err, "no columns in table")
+
+		require.False(t, table.Next(t.Context()))
+		require.ErrorContains(t, table.Err, "no columns in table")
+		require.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
+	})
+
+	t.Run("after exhaustion returns false without error", func(t *testing.T) {
+		t.Parallel()
+
+		_, mock, table := newTable(t, stringRows("a"))
+
+		require.True(t, table.Next(t.Context()))
+		require.False(t, table.Next(t.Context()))
+		require.NoError(t, table.Err)
+
+		require.False(t, table.Next(t.Context()))
+		require.NoError(t, table.Err)
+		require.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
 	})
 }
 

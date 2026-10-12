@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ### Changed
 - `Version` in the dump header from `0.5.1` to `2.0.0`
+- `Table.Init` returns `cannot init twice` after a failure and after the rows are exhausted
 
 ### Fixed
 - `SHOW CREATE VIEW` failure
@@ -20,6 +21,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Restore failed with `Error 1146`
 - Restore failed because of the `DEFINER=` clause in dumped views
 - Backticks in table and database names not doubled
+- `Table.Next` after the last row set the error `cannot init twice`
+- Open rows left behind by a failed `Table.Init` or a row scan error
+- `Table.Next` ran the `SELECT` again after a failed `Table.Init`
 
 ### Deprecated
 

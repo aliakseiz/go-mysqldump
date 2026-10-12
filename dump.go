@@ -46,9 +46,10 @@ type Table struct {
 	Err    error
 	IsView bool
 
-	data   *Data
-	rows   *sql.Rows
-	values []any
+	data     *Data
+	rows     *sql.Rows
+	values   []any
+	finished bool
 }
 
 // tableView is the data the table template renders.
@@ -556,17 +557,22 @@ func (table *Table) CreateSQL(ctx context.Context) (string, error) {
 }
 
 // Init runs the table SELECT and prepares scan targets according to the column types.
-func (table *Table) Init(ctx context.Context) error {
-	if len(table.values) != 0 {
+// It runs once: after a failure or after the rows are exhausted, it returns an error.
+func (table *Table) Init(ctx context.Context) (err error) {
+	if len(table.values) != 0 || table.finished {
 		return errDoubleInit
 	}
 
-	var err error
+	defer func() {
+		if err != nil {
+			table.finished = true
+		}
+	}()
 
 	// Identifiers cannot be bound as query parameters; a dump needs every column.
 	selectQuery := "SELECT * FROM " + table.NameEsc() //nolint:gosec,unqueryvet // table name comes from SHOW TABLES
 
-	//nolint:rowserrcheck // rows are iterated and closed in Next
+	//nolint:rowserrcheck // rows are iterated and closed in Next, or in Init on failure
 	table.rows, err = table.data.tx.QueryContext(ctx, selectQuery)
 	if err != nil {
 		return fmt.Errorf("select from table %s: %w", table.Name, err)
@@ -574,15 +580,21 @@ func (table *Table) Init(ctx context.Context) error {
 
 	columns, err := table.rows.Columns()
 	if err != nil {
+		table.discardRows()
+
 		return fmt.Errorf("get columns of table %s: %w", table.Name, err)
 	}
 
 	if len(columns) == 0 {
+		table.discardRows()
+
 		return errNoColumns
 	}
 
 	columnTypes, err := table.rows.ColumnTypes()
 	if err != nil {
+		table.discardRows()
+
 		return fmt.Errorf("get column types of table %s: %w", table.Name, err)
 	}
 
@@ -617,7 +629,12 @@ func scanTargetType(columnType *sql.ColumnType) reflect.Type {
 }
 
 // Next advances to the next row and scans it into the table values. Failures are stored in Table.Err.
+// After the last row or a failure, Next returns false without querying again.
 func (table *Table) Next(ctx context.Context) bool {
+	if table.finished {
+		return false
+	}
+
 	if table.rows == nil {
 		err := table.Init(ctx)
 		if err != nil {
@@ -626,7 +643,7 @@ func (table *Table) Next(ctx context.Context) bool {
 			return false
 		}
 	}
-	// Fallthrough
+
 	if !table.rows.Next() {
 		table.finishRows()
 
@@ -636,6 +653,7 @@ func (table *Table) Next(ctx context.Context) bool {
 	err := table.rows.Scan(table.values...)
 	if err != nil {
 		table.Err = fmt.Errorf("scan row of table %s: %w", table.Name, err)
+		table.finishRows()
 
 		return false
 	}
@@ -764,6 +782,13 @@ func (table *Table) finishRows() {
 		table.Err = fmt.Errorf("close rows of table %s: %w", table.Name, err)
 	}
 
+	table.rows = nil
+	table.finished = true
+}
+
+// discardRows closes the rows after a failed Init. The Init error is the one reported.
+func (table *Table) discardRows() {
+	_ = table.rows.Close()
 	table.rows = nil
 }
 
