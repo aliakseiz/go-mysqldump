@@ -1249,6 +1249,18 @@ func TestTable_RowValues(t *testing.T) {
 			want:   `(_binary 'raw\'data')`,
 		},
 		{
+			name:   "empty blob is not NULL",
+			column: sqlmock.NewColumn("c").OfType("BLOB", []byte{}),
+			value:  []byte{},
+			want:   "(_binary '')",
+		},
+		{
+			name:   "null blob",
+			column: sqlmock.NewColumn("c").OfType("BLOB", []byte{}),
+			value:  nil,
+			want:   "(NULL)",
+		},
+		{
 			name:   "column without scan type is quoted",
 			column: sqlmock.NewColumn("c"),
 			value:  "x",
@@ -1304,7 +1316,6 @@ func TestTable_Stream(t *testing.T) {
 	)
 
 	// A statement of n tuples is len(prefix)+7n bytes, so two tuples take 37 bytes.
-	// Packet 36 is left out: the size check reserves one byte for the separator and the semicolon, which take two.
 	statement := func(tuples int) string {
 		return prefix + strings.TrimSuffix(strings.Repeat(tuple+",", tuples), ",") + ";"
 	}
@@ -1317,6 +1328,7 @@ func TestTable_Stream(t *testing.T) {
 	}{
 		{name: "zero rows emit nothing", rows: 0, packet: 4096, want: nil},
 		{name: "large packet batches all rows", rows: 3, packet: 4096, want: []string{statement(3)}},
+		{name: "packet one byte below two tuples", rows: 3, packet: 36, want: []string{statement(1), statement(1), statement(1)}},
 		{name: "packet equal to two tuples", rows: 3, packet: 37, want: []string{statement(2), statement(1)}},
 		{name: "packet above two tuples", rows: 3, packet: 38, want: []string{statement(2), statement(1)}},
 		{name: "packet below two tuples", rows: 3, packet: 35, want: []string{statement(1), statement(1), statement(1)}},
@@ -1353,7 +1365,7 @@ func TestTable_Stream_KeepsEveryRow(t *testing.T) {
 	const prefix = "INSERT INTO `t` VALUES "
 
 	for _, rowCount := range []int{0, 1, 2, 7, 12} {
-		for _, packet := range []int{1, 35, 37, 60, 100, 4096} {
+		for _, packet := range []int{1, 35, 36, 37, 60, 100, 4096} {
 			t.Run(fmt.Sprintf("rows=%d/packet=%d", rowCount, packet), func(t *testing.T) {
 				t.Parallel()
 
@@ -1371,7 +1383,13 @@ func TestTable_Stream_KeepsEveryRow(t *testing.T) {
 					require.True(t, strings.HasPrefix(stmt, prefix), "statement %q", stmt)
 					require.True(t, strings.HasSuffix(stmt, ";"), "statement %q", stmt)
 
-					tuples += strings.Count(stmt, "('aa')")
+					count := strings.Count(stmt, "('aa')")
+					tuples += count
+
+					// A lone tuple may exceed the packet: a row cannot be split.
+					if count >= 2 {
+						require.LessOrEqual(t, len(stmt), packet, "statement %q", stmt)
+					}
 				}
 
 				require.NoError(t, table.Err)

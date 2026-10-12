@@ -69,6 +69,9 @@ const (
 	Version = "2.0.0"
 
 	defaultMaxAllowedPacket = 4194304
+
+	// appendOverhead is the separator before an appended row and the semicolon closing the statement.
+	appendOverhead = len(",;")
 )
 
 // takes a *MetaData.
@@ -668,7 +671,8 @@ func writeValue(buf *bytes.Buffer, value any) {
 			buf.WriteString(nullType)
 		}
 	case *sql.RawBytes:
-		if len(*val) == 0 {
+		// The driver scans NULL as a nil slice and an empty value as a non-nil empty slice.
+		if *val == nil {
 			buf.WriteString(nullType)
 		} else {
 			fmt.Fprintf(buf, "_binary '%s'", Sanitize(string(*val)))
@@ -691,7 +695,7 @@ func (table *Table) Stream(ctx context.Context) <-chan string {
 		for table.Next(ctx) {
 			row := table.RowBuffer()
 			// Truncate our insert if it won't fit
-			if insert.Len() != 0 && insert.Len()+row.Len() > table.data.MaxAllowedPacket-1 {
+			if insert.Len() != 0 && insert.Len()+row.Len()+appendOverhead > table.data.MaxAllowedPacket {
 				insert.WriteString(";")
 
 				if !table.send(ctx, valueOut, insert.String()) {

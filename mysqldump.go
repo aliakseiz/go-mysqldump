@@ -60,6 +60,7 @@ func Dump(ctx context.Context, db *sql.DB, out io.Writer) error {
 
 // Close the dumper.
 // Will also close the database the dumper is connected to as well as the out stream if it has a Close method.
+// Calling Close again, or on a Data without a Connection, is safe and closes nothing twice.
 func (data *Data) Close() error {
 	defer func() {
 		data.Connection = nil
@@ -72,9 +73,11 @@ func (data *Data) Close() error {
 		outErr = out.Close()
 	}
 
-	err := data.Connection.Close()
-	if err != nil {
-		return errors.Join(outErr, fmt.Errorf("close connection: %w", err))
+	if data.Connection != nil {
+		err := data.Connection.Close()
+		if err != nil {
+			return errors.Join(outErr, fmt.Errorf("close connection: %w", err))
+		}
 	}
 
 	if outErr != nil {

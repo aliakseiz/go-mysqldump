@@ -201,3 +201,27 @@ func TestData_Close(t *testing.T) {
 		})
 	}
 }
+
+func TestData_Close_Twice(t *testing.T) {
+	t.Parallel()
+
+	db, mock := newMockDB(t)
+	mock.ExpectClose()
+
+	out := &closeRecorder{}
+	data := &mysqldump.Data{Out: out, Connection: db}
+
+	require.NoError(t, data.Close())
+	require.NotPanics(t, func() { require.NoError(t, data.Close()) })
+	require.NoError(t, mock.ExpectationsWereMet(), "the connection must be closed once")
+}
+
+func TestData_Close_WithoutConnection(t *testing.T) {
+	t.Parallel()
+
+	out := &closeRecorder{}
+	data := &mysqldump.Data{Out: out}
+
+	require.NotPanics(t, func() { require.NoError(t, data.Close()) })
+	require.True(t, out.closed, "the out stream must be closed")
+}

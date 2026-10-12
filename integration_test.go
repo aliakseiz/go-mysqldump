@@ -86,6 +86,7 @@ func seedSource(ctx context.Context, tb testing.TB, db *sql.DB) {
 		{-7, 42, uint32(0), "0.00", "it's a \"quoted\" back\\slash", "line1\nline2\ttab", nil},
 		{0, nil, uint32(1), "-1234.50", nil, nil, nil},
 		{2147483647, -2147483648, uint32(2), "99999999.99", "héllo", "multi\r\nline", []byte("x")},
+		{3, nil, uint32(3), "1.00", "empty blob", nil, []byte{}},
 	}
 
 	for _, row := range rows {

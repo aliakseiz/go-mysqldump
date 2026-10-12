@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ### Fixed
 - `SHOW CREATE VIEW` failure
+- `Data.Close` panic on a second call or on a `Data` without a `Connection`
+- `INSERT` statement exceeding `MaxAllowedPacket` by one byte
+- Empty `BLOB` value dumped as `NULL`; it is now dumped as `_binary ''`
 
 ### Deprecated
 
