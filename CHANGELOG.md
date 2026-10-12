@@ -6,11 +6,23 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+### Added
+
+### Changed
+
+### Fixed
+
+### Deprecated
+
+### Removed
+
+### Security
+
+## [2.0.0] - 2026-10-12
+
 ## BREAKING CHANGES
 - Module path is `github.com/aliakseiz/go-mysqldump/v2`
 - Methods that query the database take a `context.Context` as first parameter. All queries use the context, so a dump can be cancelled or time-limited
-
-### Added
 
 ### Changed
 - `UNLOCK TABLES` still runs after the context is cancelled
@@ -25,12 +37,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - `Stream` goroutine stayed blocked forever when the output writer failed
 - Linter warnings
 - Outdated example in `doc.go`
-
-### Deprecated
-
-### Removed
-
-### Security
 
 ## [1.3.0] - 2025-10-23
 
