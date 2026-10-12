@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## [Unreleased]
 
 ### Added
+
+### Changed
+
+### Fixed
+
+### Deprecated
+
+### Removed
+
+### Security
+
+## [2.1.0] - 2026-10-12
+
+### Added
 - Unit, function and integration tests
 
 ### Changed
@@ -25,12 +39,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Open rows left behind by a failed `Table.Init` or a row scan error
 - `Table.Next` ran the `SELECT` again after a failed `Table.Init`
 
-### Deprecated
-
 ### Removed
 - Outdated tests
-
-### Security
 
 ## [2.0.0] - 2026-10-12
 
