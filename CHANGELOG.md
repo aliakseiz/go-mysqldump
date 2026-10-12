@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - `Data.Close` panic on a second call or on a `Data` without a `Connection`
 - `INSERT` statement exceeding `MaxAllowedPacket` by one byte
 - Empty `BLOB` value dumped as `NULL`; it is now dumped as `_binary ''`
+- Restore failed with `Error 1146`
+- Restore failed because of the `DEFINER=` clause in dumped views
+- Backticks in table and database names not doubled
 
 ### Deprecated
 

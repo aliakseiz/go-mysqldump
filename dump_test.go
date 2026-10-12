@@ -205,6 +205,21 @@ func (o dumpOpts) data(db *sql.DB, out io.Writer) *mysqldump.Data {
 	}
 }
 
+// tablesFirst returns the specs with base tables before views, each group in its original order.
+func tablesFirst(specs []tableSpec) []tableSpec {
+	ordered := make([]tableSpec, 0, len(specs))
+
+	for _, view := range []bool{false, true} {
+		for _, spec := range specs {
+			if spec.view == view {
+				ordered = append(ordered, spec)
+			}
+		}
+	}
+
+	return ordered
+}
+
 // wantOutput is the dump text up to the completion comment.
 func (o dumpOpts) wantOutput() string {
 	var out strings.Builder
@@ -215,7 +230,7 @@ func (o dumpOpts) wantOutput() string {
 		fmt.Fprintf(&out, expectedRecreateFormat, o.dbName)
 	}
 
-	for _, spec := range o.dumped() {
+	for _, spec := range tablesFirst(o.dumped()) {
 		out.WriteString(spec.output())
 	}
 
@@ -411,12 +426,16 @@ func expectDumpBody(mock sqlmock.Sqlmock, opts dumpOpts) {
 		mock.ExpectExec(lockRegex(dumped)).WillReturnResult(sqlmock.NewResult(0, 0))
 	}
 
+	// The type of every object is read before the first one is written, so views can follow the tables.
 	for _, spec := range dumped {
 		if opts.dbName == "" {
 			expectDatabase(mock, opts.schema())
 		}
 
 		expectTableType(mock, opts.schema(), spec.name, spec.typeName())
+	}
+
+	for _, spec := range tablesFirst(dumped) {
 		expectShowCreate(mock, spec)
 
 		if !spec.view {
@@ -459,6 +478,10 @@ func TestData_Dump(t *testing.T) {
 		{
 			name: "database name set",
 			opts: dumpOpts{specs: []tableSpec{fixtureTable, fixtureView}, lock: true, dbName: "app_db"},
+		},
+		{
+			name: "view listed before its table is written after it",
+			opts: dumpOpts{specs: []tableSpec{fixtureView, fixtureTable}, lock: true},
 		},
 		{
 			name: "view only",
@@ -692,6 +715,43 @@ func TestData_Dump_Errors(t *testing.T) {
 			require.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
 		})
 	}
+}
+
+func TestData_Dump_QuotesBackticks(t *testing.T) {
+	t.Parallel()
+
+	const (
+		dbName = "d`b"
+		table  = "a`b"
+	)
+
+	db, mock := newMockDB(t)
+
+	expectPrelude(mock, table)
+	mock.ExpectExec("^" + regexp.QuoteMeta("LOCK TABLES `a``b` READ /*!32311 LOCAL */") + "$").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	expectTableType(mock, dbName, table, "BASE TABLE")
+	mock.ExpectQuery("^" + regexp.QuoteMeta("SHOW CREATE TABLE `a``b`") + "$").
+		WillReturnRows(sqlmock.NewRows([]string{"Table", "Create Table"}).AddRow(table, "CREATE TABLE `a``b` (`id` int)"))
+	mock.ExpectQuery(selectAll("a``b")).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("1"))
+	mock.ExpectExec(sqlUnlock).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
+
+	var buf bytes.Buffer
+
+	err := (&mysqldump.Data{Out: &buf, Connection: db, DBName: dbName, LockTables: true}).Dump(t.Context())
+
+	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
+
+	out := buf.String()
+
+	require.Contains(t, out, "DROP DATABASE IF EXISTS `d``b`;")
+	require.Contains(t, out, "CREATE DATABASE `d``b` ")
+	require.Contains(t, out, "USE `d``b`;")
+	require.Contains(t, out, "DROP TABLE IF EXISTS `a``b`;")
+	require.Contains(t, out, "INSERT INTO `a``b` VALUES ('1');")
 }
 
 func TestData_Dump_ContextCancelled(t *testing.T) {
@@ -1052,7 +1112,24 @@ func TestMetaData_UpdateServerVersion(t *testing.T) {
 func TestTable_NameEsc(t *testing.T) {
 	t.Parallel()
 
-	require.Equal(t, "`Test_Table`", (&mysqldump.Table{Name: "Test_Table"}).NameEsc())
+	tests := []struct {
+		name  string
+		table string
+		want  string
+	}{
+		{name: "plain", table: "Test_Table", want: "`Test_Table`"},
+		{name: "backtick doubled", table: "a`b", want: "`a``b`"},
+		{name: "only backticks", table: "``", want: "`````" + "`"},
+		{name: "backtick at the edges", table: "`a`", want: "```a```"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			require.Equal(t, tt.want, (&mysqldump.Table{Name: tt.table}).NameEsc())
+		})
+	}
 }
 
 func TestTable_CreateSQL(t *testing.T) {
@@ -1077,6 +1154,36 @@ func TestTable_CreateSQL(t *testing.T) {
 			spec:    fixtureView,
 			rows:    viewRows("Test_View", viewCreateSQL),
 			wantSQL: viewCreateSQL,
+		},
+		{
+			name:    "view definer removed, security clause kept",
+			spec:    fixtureView,
+			rows:    viewRows("Test_View", "CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `Test_View` AS select 1 AS `a`"),
+			wantSQL: "CREATE ALGORITHM=UNDEFINED SQL SECURITY DEFINER VIEW `Test_View` AS select 1 AS `a`",
+		},
+		{
+			name:    "view definer with backtick in user and wildcard host removed",
+			spec:    fixtureView,
+			rows:    viewRows("Test_View", "CREATE ALGORITHM=UNDEFINED DEFINER=`we``ird`@`%` SQL SECURITY INVOKER VIEW `Test_View` AS select 1 AS `a`"),
+			wantSQL: "CREATE ALGORITHM=UNDEFINED SQL SECURITY INVOKER VIEW `Test_View` AS select 1 AS `a`",
+		},
+		{
+			name:    "view definer without algorithm removed",
+			spec:    fixtureView,
+			rows:    viewRows("Test_View", "CREATE DEFINER=`root`@`localhost` VIEW `Test_View` AS select 1 AS `a`"),
+			wantSQL: "CREATE VIEW `Test_View` AS select 1 AS `a`",
+		},
+		{
+			name:    "definer text in the view body kept",
+			spec:    fixtureView,
+			rows:    viewRows("Test_View", "CREATE VIEW `Test_View` AS select 'DEFINER=`x`@`y`' AS `a`"),
+			wantSQL: "CREATE VIEW `Test_View` AS select 'DEFINER=`x`@`y`' AS `a`",
+		},
+		{
+			name:    "definer text in a table kept",
+			spec:    fixtureTable,
+			rows:    sqlmock.NewRows([]string{"Table", "Create Table"}).AddRow("Test_Table", "CREATE TABLE `Test_Table` (`a` int) COMMENT='CREATE DEFINER=`x`@`y` VIEW'"),
+			wantSQL: "CREATE TABLE `Test_Table` (`a` int) COMMENT='CREATE DEFINER=`x`@`y` VIEW'",
 		},
 		{
 			name:   "no row returned",

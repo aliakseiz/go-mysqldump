@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"regexp"
+	"strings"
 	"text/template"
 	"time"
 )
@@ -35,7 +37,7 @@ type Data struct {
 }
 
 type recreate struct {
-	Database string
+	DatabaseEsc string
 }
 
 // Table struct contains variables for table template.
@@ -138,11 +140,18 @@ UNLOCK TABLES;
 
 // Takes a *recreate.
 const recreateTmpl = " " +
-	"DROP DATABASE IF EXISTS `{{ .Database }}`;" +
-	"CREATE DATABASE `{{ .Database }}` CHARACTER SET = 'utf8' COLLATE = 'utf8_general_ci';" +
-	"USE `{{ .Database }}`;"
+	"DROP DATABASE IF EXISTS {{ .DatabaseEsc }};" +
+	"CREATE DATABASE {{ .DatabaseEsc }} CHARACTER SET = 'utf8' COLLATE = 'utf8_general_ci';" +
+	"USE {{ .DatabaseEsc }};"
 
 const nullType = "NULL"
+
+// definerClause matches the DEFINER clause in the head of a CREATE VIEW statement. The user and host are quoted
+// identifiers.
+var definerClause = regexp.MustCompile(
+	"^(CREATE(?:\\s+OR\\s+REPLACE)?(?:\\s+ALGORITHM\\s*=\\s*\\w+)?)" +
+		"\\s+DEFINER\\s*=\\s*(?:`(?:[^`]|``)*`|[^@\\s]+)@(?:`(?:[^`]|``)*`|\\S+)",
+)
 
 var (
 	errUnexpectedTable   = errors.New("returned table is not the same as requested table")
@@ -383,7 +392,7 @@ func (data *Data) writeHeader(ctx context.Context) (MetaData, error) {
 	}
 
 	if data.DBName != "" {
-		err = data.recreateTmpl.Execute(data.Out, recreate{Database: data.DBName})
+		err = data.recreateTmpl.Execute(data.Out, recreate{DatabaseEsc: quoteIdent(data.DBName)})
 		if err != nil {
 			return meta, fmt.Errorf("write database recreate section: %w", err)
 		}
@@ -407,7 +416,7 @@ func (data *Data) lockTables(ctx context.Context, tables []string) (func(), erro
 			buf.WriteString(",")
 		}
 
-		buf.WriteString("`" + name + "` READ /*!32311 LOCAL */")
+		buf.WriteString(quoteIdent(name) + " READ /*!32311 LOCAL */")
 	}
 
 	_, err := data.Connection.ExecContext(ctx, buf.String())
@@ -423,9 +432,30 @@ func (data *Data) lockTables(ctx context.Context, tables []string) (func(), erro
 	}, nil
 }
 
-func (data *Data) dumpTables(ctx context.Context, tables []string) error {
-	for _, name := range tables {
-		err := data.dumpTable(ctx, data.DBName, name)
+// dumpTables writes the base tables, then the views, so a view never precedes a table it reads.
+// Each group keeps the order of the given names.
+func (data *Data) dumpTables(ctx context.Context, names []string) error {
+	var tables, views []*Table
+
+	for _, name := range names {
+		if data.err != nil {
+			return data.err
+		}
+
+		table, err := data.CreateTable(ctx, data.DBName, name)
+		if err != nil {
+			return err
+		}
+
+		if table.IsView {
+			views = append(views, table)
+		} else {
+			tables = append(tables, table)
+		}
+	}
+
+	for _, table := range append(tables, views...) {
+		err := data.WriteTable(ctx, table)
 		if err != nil {
 			return err
 		}
@@ -442,19 +472,6 @@ func (data *Data) rollback() error {
 	}
 
 	return nil
-}
-
-func (data *Data) dumpTable(ctx context.Context, schema, name string) error {
-	if data.err != nil {
-		return data.err
-	}
-
-	table, err := data.CreateTable(ctx, schema, name)
-	if err != nil {
-		return err
-	}
-
-	return data.WriteTable(ctx, table)
 }
 
 func (data *Data) isIgnoredTable(name string) bool {
@@ -479,20 +496,12 @@ func (meta *MetaData) UpdateServerVersion(ctx context.Context, data *Data) error
 
 // NameEsc returns the backtick-quoted table name.
 func (table *Table) NameEsc() string {
-	return "`" + table.Name + "`"
+	return quoteIdent(table.Name)
 }
 
 // CreateSQL returns the CREATE statement of the table or view.
 func (table *Table) CreateSQL(ctx context.Context) (string, error) {
-	var createSQLQuery string
-
-	if table.IsView {
-		createSQLQuery = "SHOW CREATE VIEW " + table.NameEsc()
-	} else {
-		createSQLQuery = "SHOW CREATE TABLE " + table.NameEsc()
-	}
-
-	rows, err := table.data.tx.QueryContext(ctx, createSQLQuery)
+	rows, err := table.data.tx.QueryContext(ctx, table.showCreateQuery())
 	if err != nil {
 		return "", fmt.Errorf("get create statement of table %s: %w", table.Name, err)
 	}
@@ -536,6 +545,11 @@ func (table *Table) CreateSQL(ctx context.Context) (string, error) {
 
 	if nameReturn.String != table.Name {
 		return "", errUnexpectedTable
+	}
+
+	if table.IsView {
+		// A restore by a user that cannot act as the original definer would fail.
+		return definerClause.ReplaceAllString(createSQL.String, "$1"), nil
 	}
 
 	return createSQL.String, nil
@@ -729,6 +743,15 @@ func (table *Table) SetData(data *Data) {
 	table.data = data
 }
 
+// showCreateQuery returns the statement reading the CREATE statement of the table or view.
+func (table *Table) showCreateQuery() string {
+	if table.IsView {
+		return "SHOW CREATE VIEW " + table.NameEsc()
+	}
+
+	return "SHOW CREATE TABLE " + table.NameEsc()
+}
+
 // finishRows records the iteration error, if any, and closes the rows.
 func (table *Table) finishRows() {
 	err := table.rows.Err()
@@ -754,4 +777,9 @@ func (table *Table) send(ctx context.Context, out chan<- string, statement strin
 
 		return false
 	}
+}
+
+// quoteIdent returns the identifier in backticks, doubling the backticks inside it.
+func quoteIdent(name string) string {
+	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
 }

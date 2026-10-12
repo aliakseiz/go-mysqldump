@@ -39,6 +39,10 @@ var integrationSchema = []string{
 		"id INT NOT NULL AUTO_INCREMENT PRIMARY KEY," +
 		"label VARCHAR(200) NOT NULL)",
 	"CREATE VIEW labelled_items AS SELECT id, label FROM items WHERE label IS NOT NULL",
+	// Sorts before the table it reads, so the dump must write views after tables.
+	"CREATE VIEW a_items AS SELECT id, qty FROM items",
+	"CREATE TABLE `back``tick` (id INT NOT NULL PRIMARY KEY, v VARCHAR(20) NOT NULL)",
+	"INSERT INTO `back``tick` VALUES (1, 'a`b')",
 }
 
 const (
@@ -206,6 +210,8 @@ func TestIntegration_RoundTrip(t *testing.T) {
 				require.Greater(t, inserts, 1, "the bulk table must span several statements")
 			}
 
+			require.NotContains(t, dump.String(), "DEFINER=", "the views must not carry the source definer")
+
 			restorer := openDB(t, base, dst, true)
 			execAll(ctx, t, restorer, dump.String())
 
@@ -213,6 +219,8 @@ func TestIntegration_RoundTrip(t *testing.T) {
 				"SELECT * FROM items ORDER BY id",
 				"SELECT * FROM bulk ORDER BY id",
 				"SELECT * FROM labelled_items ORDER BY id",
+				"SELECT * FROM a_items ORDER BY id",
+				"SELECT * FROM `back``tick` ORDER BY id",
 			} {
 				want := queryAll(ctx, t, seeder, query)
 				require.NotEmpty(t, want, query)
