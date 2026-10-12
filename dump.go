@@ -46,7 +46,7 @@ type Table struct {
 
 	data   *Data
 	rows   *sql.Rows
-	values []interface{}
+	values []any
 }
 
 // MetaData struct contains variables for header and footer templates.
@@ -137,42 +137,22 @@ var (
 	errUnexpectedTable = errors.New("returned table is not the same as requested table")
 	errDoubleInit      = errors.New("cannot init twice")
 	errNoColumns       = errors.New("no columns in table")
+	errNoDatabase      = errors.New("no database selected")
 )
 
 // Dump data using struct.
 func (data *Data) Dump() error {
-	meta := MetaData{
-		DumpVersion: Version,
-	}
-
-	if data.MaxAllowedPacket == 0 {
-		data.MaxAllowedPacket = defaultMaxAllowedPacket
-	}
-
-	if err := data.GetTemplates(); err != nil {
+	err := data.start()
+	if err != nil {
 		return err
 	}
 
-	// Start the read only transaction and defer the rollback until the end.
-	// This way the database will have the exact state it did at the beginning of
-	// the backup and nothing can be accidentally committed.
-	if err := data.Begin(); err != nil {
-		return err
-	}
-	defer data.rollback() // nolint:errcheck
+	// The transaction is read-only, so a rollback error carries no information.
+	defer data.rollback() //nolint:errcheck // read-only transaction
 
-	if err := meta.UpdateServerVersion(data); err != nil {
+	meta, err := data.writeHeader()
+	if err != nil {
 		return err
-	}
-
-	if err := data.headerTmpl.Execute(data.Out, meta); err != nil {
-		return err
-	}
-
-	if data.DBName != "" {
-		if err := data.recreateTmpl.Execute(data.Out, recreate{Database: data.DBName}); err != nil {
-			return err
-		}
 	}
 
 	tables, err := data.GetTables()
@@ -180,104 +160,77 @@ func (data *Data) Dump() error {
 		return err
 	}
 
-	// Lock all tables before dumping if present.
-	if data.LockTables && len(tables) > 0 {
-		var b bytes.Buffer
-
-		b.WriteString("LOCK TABLES ")
-
-		for index, name := range tables {
-			if index != 0 {
-				b.WriteString(",")
-			}
-
-			b.WriteString("`" + name + "` READ /*!32311 LOCAL */")
-		}
-
-		if _, err := data.Connection.Exec(b.String()); err != nil {
-			return err
-		}
-
-		defer data.Connection.Exec("UNLOCK TABLES") // nolint:errcheck
+	unlock, err := data.lockTables(tables)
+	if err != nil {
+		return err
 	}
+	defer unlock()
 
-	for _, name := range tables {
-		if err = data.dumpTable(data.DBName, name); err != nil {
-			return err
-		}
-	}
-
-	if data.err != nil {
-		return data.err
-	}
-
-	meta.CompleteTime = time.Now().String()
-
-	return data.footerTmpl.Execute(data.Out, meta)
-}
-
-// MARK: - Private methods
-
-// Begin starts a read only transaction that will be whatever the database was when it was called.
-func (data *Data) Begin() (err error) {
-	data.tx, err = data.Connection.BeginTx(context.Background(), &sql.TxOptions{
-		Isolation: sql.LevelRepeatableRead,
-		ReadOnly:  true,
-	})
-
-	return
-}
-
-// rollback cancels the transaction.
-func (data *Data) rollback() error {
-	return data.tx.Rollback()
-}
-
-func (data *Data) dumpTable(schema, name string) error {
-	if data.err != nil {
-		return data.err
-	}
-
-	table, err := data.CreateTable(schema, name)
+	err = data.dumpTables(tables)
 	if err != nil {
 		return err
 	}
 
-	return data.WriteTable(table)
+	meta.CompleteTime = time.Now().String()
+
+	err = data.footerTmpl.Execute(data.Out, meta)
+	if err != nil {
+		return fmt.Errorf("write footer: %w", err)
+	}
+
+	return nil
+}
+
+// Begin starts a read-only transaction that will be whatever the database was when it was called.
+func (data *Data) Begin() error {
+	tx, err := data.Connection.BeginTx(context.Background(), &sql.TxOptions{
+		Isolation: sql.LevelRepeatableRead,
+		ReadOnly:  true,
+	})
+	if err != nil {
+		return fmt.Errorf("begin transaction: %w", err)
+	}
+
+	data.tx = tx
+
+	return nil
 }
 
 // WriteTable fills table template with provided *table data.
 func (data *Data) WriteTable(table *Table) error {
-	if err := data.tableTmpl.Execute(data.Out, table); err != nil {
-		return err
+	err := data.tableTmpl.Execute(data.Out, table)
+	if err != nil {
+		return fmt.Errorf("write table %s: %w", table.Name, err)
 	}
 
 	return table.Err
 }
 
 // GetTemplates initializes the templates on data from the constants in this file.
-func (data *Data) GetTemplates() (err error) {
+func (data *Data) GetTemplates() error {
+	var err error
+
 	data.headerTmpl, err = template.New("mysqldumpHeader").Parse(headerTmpl)
 	if err != nil {
-		return
+		return fmt.Errorf("parse header template: %w", err)
 	}
 
 	data.recreateTmpl, err = template.New("mysqldumpRecreate").Parse(recreateTmpl)
 	if err != nil {
-		return
+		return fmt.Errorf("parse recreate template: %w", err)
 	}
 
 	data.tableTmpl, err = template.New("mysqldumpTable").Parse(tableTmpl)
 	if err != nil {
-		return
+		return fmt.Errorf("parse table template: %w", err)
 	}
 
 	data.footerTmpl, err = template.New("mysqldumpTable").Parse(footerTmpl)
 	if err != nil {
-		return
+		return fmt.Errorf("parse footer template: %w", err)
 	}
 
-	return
+	return nil
 }
 
 // GetTables returns database tables.
@@ -286,15 +239,17 @@ func (data *Data) GetTables() ([]string, error) {
 
 	rows, err := data.tx.Query("SHOW TABLES")
 	if err != nil {
-		return tables, err
+		return tables, fmt.Errorf("show tables: %w", err)
 	}
-	defer rows.Close()
+
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var table sql.NullString
 
-		if err := rows.Scan(&table); err != nil {
-			return tables, err
+		err = rows.Scan(&table)
+		if err != nil {
+			return tables, fmt.Errorf("scan table name: %w", err)
 		}
 
 		if table.Valid && !data.isIgnoredTable(table.String) {
@@ -302,26 +257,12 @@ func (data *Data) GetTables() ([]string, error) {
 		}
 	}
 
-	return tables, rows.Err()
-}
-
-func (data *Data) isIgnoredTable(name string) bool {
-	_, ok := data.IgnoreTables[name]
-	if ok {
-		return true
+	err = rows.Err()
+	if err != nil {
+		return tables, fmt.Errorf("iterate tables: %w", err)
 	}
 
-	return false
-}
-
-// UpdateServerVersion fetches server version and stores it in Data.
-func (meta *MetaData) UpdateServerVersion(data *Data) (err error) {
-	var serverVersion sql.NullString
-
-	err = data.tx.QueryRow("SELECT version()").Scan(&serverVersion)
-	meta.ServerVersion = serverVersion.String
-
-	return
+	return tables, nil
 }
 
 // CreateTable initializes a Table struct.
@@ -337,19 +278,25 @@ func (data *Data) CreateTable(schema, name string) (*Table, error) {
 	actualSchema := schema
 	if actualSchema == "" {
 		var currentDB sql.NullString
+
 		err := data.tx.QueryRow("SELECT DATABASE()").Scan(&currentDB)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("get current database: %w", err)
 		}
+
 		if !currentDB.Valid || currentDB.String == "" {
-			return nil, errors.New("no database selected")
+			return nil, errNoDatabase
 		}
+
 		actualSchema = currentDB.String
 	}
 
-	err := data.tx.QueryRow("SELECT table_type FROM information_schema.tables WHERE table_schema = ? AND table_name = ?", actualSchema, name).Scan(&tableType)
+	err := data.tx.QueryRow(
+		"SELECT table_type FROM information_schema.tables WHERE table_schema = ? AND table_name = ?",
+		actualSchema, name,
+	).Scan(&tableType)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get type of table %s: %w", name, err)
 	}
 
 	if tableType == "VIEW" {
@@ -359,10 +306,137 @@ func (data *Data) CreateTable(schema, name string) (*Table, error) {
 	return table, nil
 }
 
+// start applies defaults, parses templates, and opens the transaction.
+func (data *Data) start() error {
+	if data.MaxAllowedPacket == 0 {
+		data.MaxAllowedPacket = defaultMaxAllowedPacket
+	}
+
+	err := data.GetTemplates()
+	if err != nil {
+		return err
+	}
+
+	// Start the read-only transaction. The caller defers the rollback until the end.
+	// This way the database will have the exact state it did at the beginning of
+	// the backup, and nothing can be accidentally committed.
+	return data.Begin()
+}
+
+// writeHeader writes the dump header and, when DBName is set, the database recreate section.
+func (data *Data) writeHeader() (MetaData, error) {
+	meta := MetaData{
+		DumpVersion: Version,
+	}
+
+	err := meta.UpdateServerVersion(data)
+	if err != nil {
+		return meta, err
+	}
+
+	err = data.headerTmpl.Execute(data.Out, meta)
+	if err != nil {
+		return meta, fmt.Errorf("write header: %w", err)
+	}
+
+	if data.DBName != "" {
+		err = data.recreateTmpl.Execute(data.Out, recreate{Database: data.DBName})
+		if err != nil {
+			return meta, fmt.Errorf("write database recreate section: %w", err)
+		}
+	}
+
+	return meta, nil
+}
+
+// lockTables locks all tables for reading when LockTables is set and returns the function releasing the locks.
+func (data *Data) lockTables(tables []string) (func(), error) {
+	if !data.LockTables || len(tables) == 0 {
+		return func() {}, nil
+	}
+
+	var buf bytes.Buffer
+
+	buf.WriteString("LOCK TABLES ")
+
+	for index, name := range tables {
+		if index != 0 {
+			buf.WriteString(",")
+		}
+
+		buf.WriteString("`" + name + "` READ /*!32311 LOCAL */")
+	}
+
+	_, err := data.Connection.Exec(buf.String())
+	if err != nil {
+		return nil, fmt.Errorf("lock tables: %w", err)
+	}
+
+	return func() {
+		_, _ = data.Connection.Exec("UNLOCK TABLES")
+	}, nil
+}
+
+func (data *Data) dumpTables(tables []string) error {
+	for _, name := range tables {
+		err := data.dumpTable(data.DBName, name)
+		if err != nil {
+			return err
+		}
+	}
+
+	return data.err
+}
+
+// rollback cancels the transaction.
+func (data *Data) rollback() error {
+	err := data.tx.Rollback()
+	if err != nil {
+		return fmt.Errorf("rollback transaction: %w", err)
+	}
+
+	return nil
+}
+
+func (data *Data) dumpTable(schema, name string) error {
+	if data.err != nil {
+		return data.err
+	}
+
+	table, err := data.CreateTable(schema, name)
+	if err != nil {
+		return err
+	}
+
+	return data.WriteTable(table)
+}
+
+func (data *Data) isIgnoredTable(name string) bool {
+	_, ok := data.IgnoreTables[name]
+
+	return ok
+}
+
+// UpdateServerVersion fetches server version and stores it in Data.
+func (meta *MetaData) UpdateServerVersion(data *Data) error {
+	var serverVersion sql.NullString
+
+	err := data.tx.QueryRow("SELECT version()").Scan(&serverVersion)
+	meta.ServerVersion = serverVersion.String
+
+	if err != nil {
+		return fmt.Errorf("get server version: %w", err)
+	}
+
+	return nil
+}
+
+// NameEsc returns the backtick-quoted table name.
 func (table *Table) NameEsc() string {
 	return "`" + table.Name + "`"
 }
 
+// CreateSQL returns the CREATE statement of the table or view.
 func (table *Table) CreateSQL() (string, error) {
 	var (
 		nameReturn, createSQL sql.NullString
@@ -375,8 +449,9 @@ func (table *Table) CreateSQL() (string, error) {
 		createSQLQuery = "SHOW CREATE TABLE " + table.NameEsc()
 	}
 
-	if err := table.data.tx.QueryRow(createSQLQuery).Scan(&nameReturn, &createSQL); err != nil {
-		return "", err
+	err := table.data.tx.QueryRow(createSQLQuery).Scan(&nameReturn, &createSQL)
+	if err != nil {
+		return "", fmt.Errorf("get create statement of table %s: %w", table.Name, err)
 	}
 
 	if nameReturn.String != table.Name {
@@ -386,79 +461,96 @@ func (table *Table) CreateSQL() (string, error) {
 	return createSQL.String, nil
 }
 
-func (table *Table) Init() (err error) {
+// Init runs the table SELECT and prepares scan targets according to the column types.
+func (table *Table) Init() error {
 	if len(table.values) != 0 {
 		return errDoubleInit
 	}
 
-	// nolint:rowserrcheck, sqlclosecheck
+	var err error
+
+	//nolint:rowserrcheck // rows are iterated and closed in Next
 	table.rows, err = table.data.tx.Query(fmt.Sprintf("SELECT * FROM %s", table.NameEsc()))
 	if err != nil {
-		return err
+		return fmt.Errorf("select from table %s: %w", table.Name, err)
 	}
 
 	columns, err := table.rows.Columns()
 	if err != nil {
-		return err
+		return fmt.Errorf("get columns of table %s: %w", table.Name, err)
 	}
 
 	if len(columns) == 0 {
 		return errNoColumns
 	}
 
-	tt, err := table.rows.ColumnTypes()
+	columnTypes, err := table.rows.ColumnTypes()
 	if err != nil {
-		return err
+		return fmt.Errorf("get column types of table %s: %w", table.Name, err)
 	}
 
-	var t reflect.Type
+	table.values = make([]any, len(columnTypes))
 
-	table.values = make([]interface{}, len(tt))
-
-	for i, tp := range tt {
-		st := tp.ScanType()
-
-		switch {
-		case tp.DatabaseTypeName() == "BLOB":
-			t = reflect.TypeOf(sql.RawBytes{})
-		case st != nil && (st.Kind() == reflect.Int ||
-			st.Kind() == reflect.Int8 ||
-			st.Kind() == reflect.Int16 ||
-			st.Kind() == reflect.Int32 ||
-			st.Kind() == reflect.Int64):
-			t = reflect.TypeOf(sql.NullInt64{})
-		default:
-			t = reflect.TypeOf(sql.NullString{})
-		}
-
-		table.values[i] = reflect.New(t).Interface()
+	for i, columnType := range columnTypes {
+		table.values[i] = reflect.New(scanTargetType(columnType)).Interface()
 	}
 
 	return nil
 }
 
+// scanTargetType picks the Go type a column is scanned into.
+//
+//nolint:ireturn // reflect.Type is the stdlib interface describing types
+func scanTargetType(columnType *sql.ColumnType) reflect.Type {
+	if columnType.DatabaseTypeName() == "BLOB" {
+		return reflect.TypeFor[sql.RawBytes]()
+	}
+
+	scanType := columnType.ScanType()
+	if scanType == nil {
+		return reflect.TypeFor[sql.NullString]()
+	}
+
+	switch scanType.Kind() { //nolint:exhaustive // other kinds are scanned as strings
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return reflect.TypeFor[sql.NullInt64]()
+	default:
+		return reflect.TypeFor[sql.NullString]()
+	}
+}
+
+// Next advances to the next row and scans it into the table values. Failures are stored in Table.Err.
 func (table *Table) Next() bool {
 	if table.rows == nil {
-		if err := table.Init(); err != nil {
+		err := table.Init()
+		if err != nil {
 			table.Err = err
 
 			return false
 		}
 	}
 	// Fallthrough
-	if table.rows.Next() {
-		if err := table.rows.Scan(table.values...); err != nil {
-			table.Err = err
-
-			return false
-		} else if err := table.rows.Err(); err != nil {
-			table.Err = err
-
-			return false
+	if !table.rows.Next() {
+		err := table.rows.Close()
+		if err != nil {
+			table.Err = fmt.Errorf("close rows of table %s: %w", table.Name, err)
 		}
-	} else {
-		table.rows.Close()
+
 		table.rows = nil
+
+		return false
+	}
+
+	err := table.rows.Scan(table.values...)
+	if err != nil {
+		table.Err = fmt.Errorf("scan row of table %s: %w", table.Name, err)
+
+		return false
+	}
+
+	err = table.rows.Err()
+	if err != nil {
+		table.Err = fmt.Errorf("iterate rows of table %s: %w", table.Name, err)
 
 		return false
 	}
@@ -466,51 +558,59 @@ func (table *Table) Next() bool {
 	return true
 }
 
+// RowValues returns the current row as an SQL values tuple.
 func (table *Table) RowValues() string {
 	return table.RowBuffer().String()
 }
 
+// RowBuffer returns the current row as an SQL values tuple in a buffer.
 func (table *Table) RowBuffer() *bytes.Buffer {
-	var b bytes.Buffer
+	var buf bytes.Buffer
 
-	b.WriteString("(")
+	buf.WriteString("(")
 
 	for key, value := range table.values {
 		if key != 0 {
-			b.WriteString(",")
+			buf.WriteString(",")
 		}
 
-		switch s := value.(type) {
-		case nil:
-			b.WriteString(nullType)
-		case *sql.NullString:
-			if s.Valid {
-				fmt.Fprintf(&b, "'%s'", Sanitize(s.String))
-			} else {
-				b.WriteString(nullType)
-			}
-		case *sql.NullInt64:
-			if s.Valid {
-				fmt.Fprintf(&b, "%d", s.Int64)
-			} else {
-				b.WriteString(nullType)
-			}
-		case *sql.RawBytes:
-			if len(*s) == 0 {
-				b.WriteString(nullType)
-			} else {
-				fmt.Fprintf(&b, "_binary '%s'", Sanitize(string(*s)))
-			}
-		default:
-			fmt.Fprintf(&b, "'%s'", value)
-		}
+		writeValue(&buf, value)
 	}
 
-	b.WriteString(")")
+	buf.WriteString(")")
 
-	return &b
+	return &buf
 }
 
+// writeValue writes a scanned column value as an SQL literal.
+func writeValue(buf *bytes.Buffer, value any) {
+	switch val := value.(type) {
+	case nil:
+		buf.WriteString(nullType)
+	case *sql.NullString:
+		if val.Valid {
+			fmt.Fprintf(buf, "'%s'", Sanitize(val.String))
+		} else {
+			buf.WriteString(nullType)
+		}
+	case *sql.NullInt64:
+		if val.Valid {
+			fmt.Fprintf(buf, "%d", val.Int64)
+		} else {
+			buf.WriteString(nullType)
+		}
+	case *sql.RawBytes:
+		if len(*val) == 0 {
+			buf.WriteString(nullType)
+		} else {
+			fmt.Fprintf(buf, "_binary '%s'", Sanitize(string(*val)))
+		}
+	default:
+		fmt.Fprintf(buf, "'%s'", value)
+	}
+}
+
+// Stream returns a channel of INSERT statements batching rows up to MaxAllowedPacket.
 func (table *Table) Stream() <-chan string {
 	valueOut := make(chan string, 1)
 
@@ -520,10 +620,11 @@ func (table *Table) Stream() <-chan string {
 		var insert bytes.Buffer
 
 		for table.Next() {
-			b := table.RowBuffer()
+			row := table.RowBuffer()
 			// Truncate our insert if it won't fit
-			if insert.Len() != 0 && insert.Len()+b.Len() > table.data.MaxAllowedPacket-1 {
+			if insert.Len() != 0 && insert.Len()+row.Len() > table.data.MaxAllowedPacket-1 {
 				insert.WriteString(";")
+
 				valueOut <- insert.String()
 
 				insert.Reset()
@@ -535,11 +636,12 @@ func (table *Table) Stream() <-chan string {
 				insert.WriteString(",")
 			}
 
-			b.WriteTo(&insert) // nolint:errcheck
+			insert.Write(row.Bytes())
 		}
 
 		if insert.Len() != 0 {
 			insert.WriteString(";")
+
 			valueOut <- insert.String()
 		}
 	}()

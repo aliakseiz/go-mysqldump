@@ -8,6 +8,8 @@ import (
 )
 
 func TestForSQLInjection(t *testing.T) {
+	t.Parallel()
+
 	examples := [][]string{
 		/** Query ** Input ** Expected **/
 		{"SELECT * WHERE field = '%s';", "test", "SELECT * WHERE field = 'test';"},

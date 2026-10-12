@@ -1,0 +1,194 @@
+# v2.14.0
+version: "2"
+linters:
+  enable:
+    - arangolint
+    - asasalint
+    - asciicheck
+    - bidichk
+    - bodyclose
+    - canonicalheader
+    - clickhouselint
+    - containedctx
+    - contextcheck
+    - copyloopvar
+    - cyclop
+    - decorder
+    - dogsled
+    - dupl
+    - dupword
+    - durationcheck
+    - embeddedstructfieldcheck
+    - err113
+    - errcheck
+    - errchkjson
+    - errname
+    - errorlint
+    - exhaustive
+    - exptostd
+    - fatcontext
+    - forbidigo
+    - forcetypeassert
+    - funcorder
+    - funlen
+    - ginkgolinter
+    - gocheckcompilerdirectives
+    - gochecknoglobals
+    - gochecknoinits
+    - gochecksumtype
+    - gocognit
+    - goconst
+    - gocritic
+    - gocyclo
+    - godoclint
+    - godot
+    - godox
+    - goheader
+    - gomoddirectives
+    - gomodguard_v2
+    - goprintffuncname
+    - gosec
+    - gosmopolitan
+    - govet
+    - grouper
+    - iface
+    - importas
+    - inamedparam
+    - ineffassign
+    - interfacebloat
+    - intrange
+    - iotamixing
+    - ireturn
+    - lll
+    - loggercheck
+    - maintidx
+    - makezero
+    - mirror
+    - misspell
+    - mnd
+    - modernize
+    - musttag
+    - nakedret
+    - nestif
+    - nilerr
+    - nilnesserr
+    - nilnil
+    - nlreturn
+    - noctx
+    - noinlineerr
+    - nolintlint
+    - nonamedreturns
+    - nosprintfhostport
+    - paralleltest
+    - perfsprint
+    - prealloc
+    - predeclared
+    - promlinter
+    - protogetter
+    - reassign
+    - recvcheck
+    - revive
+    - rowserrcheck
+    - sloglint
+    - spancheck
+    - sqlclosecheck
+    - staticcheck
+    - tagalign
+    - tagliatelle
+    - testableexamples
+    - testifylint
+    - testpackage
+    - thelper
+    - tparallel
+    - unconvert
+    - unparam
+    - unqueryvet
+    - unused
+    - usestdlibvars
+    - usetesting
+    - varnamelen
+    - wastedassign
+    - whitespace
+    - wrapcheck
+    - wsl_v5
+    - zerologlint
+  disable:
+    - depguard
+  settings:
+    errcheck:
+      check-type-assertions: true
+    goconst:
+      numbers: true
+      ignore-string-values:
+        - \?
+    interfacebloat:
+      max: 15
+    ireturn:
+      allow:
+        - rest.
+        - error
+        - http.Handler
+        - prometheus.
+        - db.DBTX
+        - context.Context
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    usetesting:
+      context-background: true
+      context-todo: true
+    varnamelen:
+      ignore-names:
+        - err
+        - i
+        - ok
+        - w # writer
+        - r # reader
+        - to
+        - db # database
+        - id
+        - tt # test
+        - t1 # timestamp
+        - t2 # timestamp
+        - tx # transaction
+        - ms # milliseconds
+        - wg # waitGroup
+        - mu # mutex
+    wsl_v5:
+      allow-first-in-block: true
+      allow-whole-block: false
+      branch-max-lines: 2
+    wrapcheck:
+      # An array of strings specifying additional substrings of signatures to ignore.
+      # Unlike 'ignore-sigs', this option extends the default set (or the set specified in 'ignore-sigs') without replacing it entirely.
+      # This allows you to add specific signatures to the ignore list
+      # while retaining the defaults or any items in 'ignore-sigs'.
+      # Default: []
+      extra-ignore-sigs:
+        - .NoContent(
+        - .JSON(
+        - .Transaction(
+        - .String(
+        - .Redirect(
+        - .DBError(
+  exclusions:
+    generated: lax
+    rules:
+      - linters:
+          - dupl
+          - forcetypeassert
+          - gochecknoglobals
+        path: .*_test.go
+      - linters:
+          - goconst
+        path: (.+)_test\.go
+issues:
+  max-same-issues: 0
+formatters:
+  enable:
+    # - gci
+    # - gofmt
+    - gofumpt
+    - goimports
+  exclusions:
+    generated: lax

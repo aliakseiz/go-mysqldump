@@ -10,8 +10,13 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ### Changed
 - `IgnoreTables` uses map instead of slice
+- Errors from `database/sql`, `os` and `text/template` are wrapped with context
+- `Close` returns the error as well as the connection
+- Updated Go to 1.27
 
 ### Fixed
+- Linter warnings
+- Outdated example in `doc.go`
 
 ### Deprecated
 

@@ -1,5 +1,5 @@
 /*
-Create MYSQL dumps in Go without the 'mysqldump' CLI as a dependency.
+Package mysqldump creates MySQL dumps in Go without the 'mysqldump' CLI as a dependency.
 
 # Example
 
@@ -23,29 +23,28 @@ This example uses the mysql driver (https://github.com/go-sql-driver/mysql) to c
 	    config.Addr = "your-hostname:your-port"
 
 	    dumpDir := "dumps"  // you should create this directory
-	    dumpFilenameFormat := fmt.Sprintf("%s-20060102T150405", dbname)
+	    dumpFilenameFormat := fmt.Sprintf("%s-20060102T150405", config.DBName)
 
-	    db, err := sql.Open("mysql", config.FormatDNS())
+	    db, err := sql.Open("mysql", config.FormatDSN())
 	    if err != nil {
 	        fmt.Println("Error opening database: ", err)
 	        return
 	    }
 
 	    // Register database with mysqldump.
-	    dumper, err := mysqldump.Register(db, dumpDir, dumpFilenameFormat)
+	    dumper, err := mysqldump.Register(db, dumpDir, dumpFilenameFormat, config.DBName)
 	    if err != nil {
-	        fmt.Println("Error registering databse:", err)
+	        fmt.Println("Error registering database:", err)
 	    	return
 	    }
 
 	    // Dump database to file.
-	    resultFilename, err := dumper.Dump()
-	    if err != nil {
+	    if err = dumper.Dump(); err != nil {
 	        fmt.Println("Error dumping:", err)
 	        return
 	    }
 
-	    fmt.Printf("File is saved to %s", resultFilename)
+	    fmt.Printf("File is saved to %s", dumpFilenameFormat)
 
 	    // Close dumper, connected database and file stream.
 	    dumper.Close()

@@ -1,12 +1,12 @@
-// Package mysqldump provides interfaces to control database dumper.
 package mysqldump
 
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"os"
-	"path"
+	"path/filepath"
 	"time"
 )
 
@@ -29,21 +29,21 @@ func Register(db *sql.DB, dir, format, database string) (*Data, error) {
 	}
 
 	name := time.Now().Format(format)
-	p := path.Join(dir, name+".sql")
+	filePath := filepath.Join(dir, name+".sql")
 
 	// Check dump directory
-	if e, _ := exists(p); e {
+	if exists(filePath) {
 		return nil, errExistsAlready
 	}
 
-	// Create .sql file
-	f, err := os.Create(p)
+	// Create .sql file. The caller chooses the path by design.
+	file, err := os.Create(filePath) //nolint:gosec // dump path is caller-supplied by design
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("create dump file: %w", err)
 	}
 
 	return &Data{
-		Out:        f,
+		Out:        file,
 		Connection: db,
 		DBName:     database,
 	}, nil
@@ -65,33 +65,32 @@ func (data *Data) Close() error {
 		data.Out = nil
 	}()
 
+	var outErr error
+
 	if out, ok := data.Out.(io.Closer); ok {
-		out.Close()
+		outErr = out.Close()
 	}
 
-	return data.Connection.Close()
+	err := data.Connection.Close()
+	if err != nil {
+		return errors.Join(outErr, fmt.Errorf("close connection: %w", err))
+	}
+
+	if outErr != nil {
+		return fmt.Errorf("close out stream: %w", outErr)
+	}
+
+	return nil
 }
 
-func exists(p string) (bool, os.FileInfo) {
-	f, err := os.Open(p)
-	if err != nil {
-		return false, nil
-	}
+func exists(p string) bool {
+	_, err := os.Stat(p)
 
-	defer f.Close()
-
-	fi, err := f.Stat()
-	if err != nil {
-		return false, nil
-	}
-
-	return true, fi
+	return err == nil
 }
 
 func isDir(p string) bool {
-	if e, fi := exists(p); e {
-		return fi.Mode().IsDir()
-	}
+	fi, err := os.Stat(p)
 
-	return false
+	return err == nil && fi.IsDir()
 }

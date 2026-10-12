@@ -1,41 +1,46 @@
-// nolint:lll
+//nolint:lll // SQL expectations are long
 package mysqldump_test
 
 import (
 	"bytes"
-	"database/sql"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/aliakseiz/go-mysqldump"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func getMockData() (data *mysqldump.Data, mock sqlmock.Sqlmock, err error) {
-	var db *sql.DB
-	db, mock, err = sqlmock.New()
-
+//nolint:ireturn // sqlmock.New returns the Sqlmock interface
+func getMockData() (*mysqldump.Data, sqlmock.Sqlmock, error) {
+	db, mock, err := sqlmock.New()
 	if err != nil {
-		return
+		return nil, nil, fmt.Errorf("create sqlmock: %w", err)
 	}
 
 	mock.ExpectBegin()
 
-	data = &mysqldump.Data{
+	data := &mysqldump.Data{
 		Connection: db,
 	}
-	err = data.Begin()
 
-	return
+	err = data.Begin()
+	if err != nil {
+		return nil, nil, fmt.Errorf("begin: %w", err)
+	}
+
+	return data, mock, nil
 }
 
 func TestGetTablesOk(t *testing.T) {
-	data, mock, err := getMockData()
-	assert.NoError(t, err, "an error was not expected when opening a stub database connection")
+	t.Parallel()
 
-	defer data.Close()
+	data, mock, err := getMockData()
+	require.NoError(t, err, "an error was not expected when opening a stub database connection")
+
+	defer func() { _ = data.Close() }()
 
 	rows := sqlmock.NewRows([]string{"Tables_in_Testdb"}).
 		AddRow("Test_Table_1").
@@ -44,19 +49,21 @@ func TestGetTablesOk(t *testing.T) {
 	mock.ExpectQuery("^SHOW TABLES$").WillReturnRows(rows)
 
 	result, err := data.GetTables()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// we make sure that all conditions were met
-	assert.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
+	require.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
 
-	assert.EqualValues(t, []string{"Test_Table_1", "Test_Table_2"}, result)
+	require.Equal(t, []string{"Test_Table_1", "Test_Table_2"}, result)
 }
 
 func TestIgnoreTablesOk(t *testing.T) {
-	data, mock, err := getMockData()
-	assert.NoError(t, err, "an error was not expected when opening a stub database connection")
+	t.Parallel()
 
-	defer data.Close()
+	data, mock, err := getMockData()
+	require.NoError(t, err, "an error was not expected when opening a stub database connection")
+
+	defer func() { _ = data.Close() }()
 
 	rows := sqlmock.NewRows([]string{"Tables_in_Testdb"}).
 		AddRow("Test_Table_1").
@@ -67,19 +74,21 @@ func TestIgnoreTablesOk(t *testing.T) {
 	data.IgnoreTables = map[string]struct{}{"Test_Table_1": {}}
 
 	result, err := data.GetTables()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// we make sure that all conditions were met
-	assert.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
+	require.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
 
-	assert.EqualValues(t, []string{"Test_Table_2"}, result)
+	require.Equal(t, []string{"Test_Table_2"}, result)
 }
 
 func TestGetTablesNil(t *testing.T) {
-	data, mock, err := getMockData()
-	assert.NoError(t, err, "an error was not expected when opening a stub database connection")
+	t.Parallel()
 
-	defer data.Close()
+	data, mock, err := getMockData()
+	require.NoError(t, err, "an error was not expected when opening a stub database connection")
+
+	defer func() { _ = data.Close() }()
 
 	rows := sqlmock.NewRows([]string{"Tables_in_Testdb"}).
 		AddRow("Test_Table_1").
@@ -89,19 +98,21 @@ func TestGetTablesNil(t *testing.T) {
 	mock.ExpectQuery("^SHOW TABLES$").WillReturnRows(rows)
 
 	result, err := data.GetTables()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// we make sure that all conditions were met
-	assert.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
+	require.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
 
-	assert.EqualValues(t, []string{"Test_Table_1", "Test_Table_3"}, result)
+	require.Equal(t, []string{"Test_Table_1", "Test_Table_3"}, result)
 }
 
 func TestGetServerVersionOk(t *testing.T) {
-	data, mock, err := getMockData()
-	assert.NoError(t, err, "an error was not expected when opening a stub database connection")
+	t.Parallel()
 
-	defer data.Close()
+	data, mock, err := getMockData()
+	require.NoError(t, err, "an error was not expected when opening a stub database connection")
+
+	defer func() { _ = data.Close() }()
 
 	rows := sqlmock.NewRows([]string{"Version()"}).
 		AddRow("test_version")
@@ -110,19 +121,21 @@ func TestGetServerVersionOk(t *testing.T) {
 
 	meta := mysqldump.MetaData{}
 
-	assert.NoError(t, meta.UpdateServerVersion(data), "error was not expected while updating stats")
+	require.NoError(t, meta.UpdateServerVersion(data), "error was not expected while updating stats")
 
 	// we make sure that all expectations were met
-	assert.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
+	require.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
 
-	assert.Equal(t, "test_version", meta.ServerVersion)
+	require.Equal(t, "test_version", meta.ServerVersion)
 }
 
 func TestCreateTableSQLOk(t *testing.T) {
-	data, mock, err := getMockData()
-	assert.NoError(t, err, "an error was not expected when opening a stub database connection")
+	t.Parallel()
 
-	defer data.Close()
+	data, mock, err := getMockData()
+	require.NoError(t, err, "an error was not expected when opening a stub database connection")
+
+	defer func() { _ = data.Close() }()
 
 	// Add expectation for table type check
 	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_schema = \? AND table_name = \?`).WithArgs("Test_Schema", "Test_Table").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
@@ -133,13 +146,13 @@ func TestCreateTableSQLOk(t *testing.T) {
 	mock.ExpectQuery("^SHOW CREATE TABLE `Test_Table`$").WillReturnRows(rows)
 
 	table, err := data.CreateTable("Test_Schema", "Test_Table")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	result, err := table.CreateSQL()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// we make sure that all expectations were met
-	assert.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
+	require.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
 
 	expectedResult := "CREATE TABLE 'Test_Table' (`id` int(11) NOT NULL AUTO_INCREMENT,`s` char(60) DEFAULT NULL, PRIMARY KEY (`id`))ENGINE=InnoDB DEFAULT CHARSET=latin1"
 
@@ -149,10 +162,12 @@ func TestCreateTableSQLOk(t *testing.T) {
 }
 
 func TestCreateTableRowValues(t *testing.T) {
-	data, mock, err := getMockData()
-	assert.NoError(t, err, "an error was not expected when opening a stub database connection")
+	t.Parallel()
 
-	defer data.Close()
+	data, mock, err := getMockData()
+	require.NoError(t, err, "an error was not expected when opening a stub database connection")
+
+	defer func() { _ = data.Close() }()
 
 	rows := sqlmock.NewRows([]string{"id", "email", "name"}).
 		AddRow(1, "test@test.de", "Test Name 1").
@@ -162,24 +177,26 @@ func TestCreateTableRowValues(t *testing.T) {
 	mock.ExpectQuery("^SELECT (.+) FROM `test`$").WillReturnRows(rows)
 
 	table, err := data.CreateTable("Test_Schema", "test")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	assert.True(t, table.Next())
+	require.True(t, table.Next())
 
 	result := table.RowValues()
-	assert.NoError(t, table.Err)
+	require.NoError(t, table.Err)
 
 	// we make sure that all expectations were met
-	assert.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
+	require.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
 
-	assert.EqualValues(t, "('1','test@test.de','Test Name 1')", result)
+	require.Equal(t, "('1','test@test.de','Test Name 1')", result)
 }
 
 func TestCreateTableValuesSteam(t *testing.T) {
-	data, mock, err := getMockData()
-	assert.NoError(t, err, "an error was not expected when opening a stub database connection")
+	t.Parallel()
 
-	defer data.Close()
+	data, mock, err := getMockData()
+	require.NoError(t, err, "an error was not expected when opening a stub database connection")
+
+	defer func() { _ = data.Close() }()
 
 	rows := sqlmock.NewRows([]string{"id", "email", "name"}).
 		AddRow(1, "test@test.de", "Test Name 1").
@@ -191,20 +208,22 @@ func TestCreateTableValuesSteam(t *testing.T) {
 	data.MaxAllowedPacket = 4096
 
 	table, err := data.CreateTable("Test_Schema", "test")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	s := table.Stream()
-	assert.EqualValues(t, "INSERT INTO `test` VALUES ('1','test@test.de','Test Name 1'),('2','test2@test.de','Test Name 2');", <-s)
+	require.Equal(t, "INSERT INTO `test` VALUES ('1','test@test.de','Test Name 1'),('2','test2@test.de','Test Name 2');", <-s)
 
 	// we make sure that all expectations were met
-	assert.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
+	require.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
 }
 
 func TestCreateTableValuesSteamSmallPackets(t *testing.T) {
-	data, mock, err := getMockData()
-	assert.NoError(t, err, "an error was not expected when opening a stub database connection")
+	t.Parallel()
 
-	defer data.Close()
+	data, mock, err := getMockData()
+	require.NoError(t, err, "an error was not expected when opening a stub database connection")
+
+	defer func() { _ = data.Close() }()
 
 	rows := sqlmock.NewRows([]string{"id", "email", "name"}).
 		AddRow(1, "test@test.de", "Test Name 1").
@@ -216,21 +235,23 @@ func TestCreateTableValuesSteamSmallPackets(t *testing.T) {
 	data.MaxAllowedPacket = 64
 
 	table, err := data.CreateTable("Test_Schema", "test")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	s := table.Stream()
-	assert.EqualValues(t, "INSERT INTO `test` VALUES ('1','test@test.de','Test Name 1');", <-s)
-	assert.EqualValues(t, "INSERT INTO `test` VALUES ('2','test2@test.de','Test Name 2');", <-s)
+	require.Equal(t, "INSERT INTO `test` VALUES ('1','test@test.de','Test Name 1');", <-s)
+	require.Equal(t, "INSERT INTO `test` VALUES ('2','test2@test.de','Test Name 2');", <-s)
 
 	// we make sure that all expectations were met
-	assert.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
+	require.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
 }
 
 func TestCreateTableAllValuesWithNil(t *testing.T) {
-	data, mock, err := getMockData()
-	assert.NoError(t, err, "an error was not expected when opening a stub database connection")
+	t.Parallel()
 
-	defer data.Close()
+	data, mock, err := getMockData()
+	require.NoError(t, err, "an error was not expected when opening a stub database connection")
+
+	defer func() { _ = data.Close() }()
 
 	rows := sqlmock.NewRows([]string{"id", "email", "name"}).
 		AddRow(1, nil, "Test Name 1").
@@ -241,31 +262,32 @@ func TestCreateTableAllValuesWithNil(t *testing.T) {
 	mock.ExpectQuery("^SELECT (.+) FROM `test`$").WillReturnRows(rows)
 
 	table, err := data.CreateTable("Test_Schema", "test")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	results := make([]string, 0)
 
 	for table.Next() {
 		row := table.RowValues()
-		assert.NoError(t, table.Err)
+		require.NoError(t, table.Err)
 
 		results = append(results, row)
 	}
 
 	// we make sure that all expectations were met
-	assert.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
+	require.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
 
 	expectedResults := []string{"('1',NULL,'Test Name 1')", "('2','test2@test.de','Test Name 2')", "('3','','Test Name 3')"}
 
-	assert.EqualValues(t, expectedResults, results)
+	require.Equal(t, expectedResults, results)
 }
 
-// nolint:dupl
 func TestCreateTableOk(t *testing.T) {
-	data, mock, err := getMockData()
-	assert.NoError(t, err, "an error was not expected when opening a stub database connection")
+	t.Parallel()
 
-	defer data.Close()
+	data, mock, err := getMockData()
+	require.NoError(t, err, "an error was not expected when opening a stub database connection")
+
+	defer func() { _ = data.Close() }()
 
 	// Add expectation for table type check
 	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_schema = \? AND table_name = \?`).WithArgs("Test_Schema", "Test_Table").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
@@ -285,15 +307,15 @@ func TestCreateTableOk(t *testing.T) {
 	data.Out = &buf
 	data.MaxAllowedPacket = 4096
 
-	assert.NoError(t, data.GetTemplates())
+	require.NoError(t, data.GetTemplates())
 
 	table, err := data.CreateTable("Test_Schema", "Test_Table")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	data.WriteTable(table) // nolint:errcheck
+	_ = data.WriteTable(table)
 
 	// we make sure that all expectations were met
-	assert.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
+	require.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
 
 	expectedResult := `
 --
@@ -321,15 +343,16 @@ UNLOCK TABLES;
 
 `
 	result := strings.ReplaceAll(buf.String(), "`", "~")
-	assert.Equal(t, expectedResult, result)
+	require.Equal(t, expectedResult, result)
 }
 
-// nolint:dupl
 func TestCreateTableOkSmallPackets(t *testing.T) {
-	data, mock, err := getMockData()
-	assert.NoError(t, err, "an error was not expected when opening a stub database connection")
+	t.Parallel()
 
-	defer data.Close()
+	data, mock, err := getMockData()
+	require.NoError(t, err, "an error was not expected when opening a stub database connection")
+
+	defer func() { _ = data.Close() }()
 
 	// Add expectation for table type check
 	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_schema = \? AND table_name = \?`).WithArgs("Test_Schema", "Test_Table").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
@@ -344,20 +367,19 @@ func TestCreateTableOkSmallPackets(t *testing.T) {
 	mock.ExpectQuery("^SHOW CREATE TABLE `Test_Table`$").WillReturnRows(createTableRows)
 	mock.ExpectQuery("^SELECT (.+) FROM `Test_Table`$").WillReturnRows(createTableValueRows)
 
-	var buf bytes.Buffer
-
-	data.Out = &buf
+	buf := new(bytes.Buffer)
+	data.Out = buf
 	data.MaxAllowedPacket = 64
 
-	assert.NoError(t, data.GetTemplates())
+	require.NoError(t, data.GetTemplates())
 
 	table, err := data.CreateTable("Test_Schema", "Test_Table")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	data.WriteTable(table) // nolint:errcheck
+	_ = data.WriteTable(table)
 
 	// we make sure that all expectations were met
-	assert.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
+	require.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
 
 	expectedResult := `
 --
@@ -386,14 +408,16 @@ UNLOCK TABLES;
 
 `
 	result := strings.ReplaceAll(buf.String(), "`", "~")
-	assert.Equal(t, expectedResult, result)
+	require.Equal(t, expectedResult, result)
 }
 
 func TestCreateTableWithEmptySchemaOk(t *testing.T) {
-	data, mock, err := getMockData()
-	assert.NoError(t, err, "an error was not expected when opening a stub database connection")
+	t.Parallel()
 
-	defer data.Close()
+	data, mock, err := getMockData()
+	require.NoError(t, err, "an error was not expected when opening a stub database connection")
+
+	defer func() { _ = data.Close() }()
 
 	// Mock the DATABASE() query that should be called when schema is empty
 	databaseRows := sqlmock.NewRows([]string{"DATABASE()"}).
@@ -408,20 +432,22 @@ func TestCreateTableWithEmptySchemaOk(t *testing.T) {
 
 	// Call CreateTable with empty schema (simulating empty DBName)
 	table, err := data.CreateTable("", "Test_Table")
-	assert.NoError(t, err)
-	assert.NotNil(t, table)
-	assert.Equal(t, "Test_Table", table.Name)
-	assert.False(t, table.IsView)
+	require.NoError(t, err)
+	require.NotNil(t, table)
+	require.Equal(t, "Test_Table", table.Name)
+	require.False(t, table.IsView)
 
 	// we make sure that all expectations were met
-	assert.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
+	require.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
 }
 
 func TestCreateTableWithEmptySchemaAndNoDatabase(t *testing.T) {
-	data, mock, err := getMockData()
-	assert.NoError(t, err, "an error was not expected when opening a stub database connection")
+	t.Parallel()
 
-	defer data.Close()
+	data, mock, err := getMockData()
+	require.NoError(t, err, "an error was not expected when opening a stub database connection")
+
+	defer func() { _ = data.Close() }()
 
 	// Mock the DATABASE() query returning NULL (no database selected)
 	databaseRows := sqlmock.NewRows([]string{"DATABASE()"}).
@@ -431,19 +457,21 @@ func TestCreateTableWithEmptySchemaAndNoDatabase(t *testing.T) {
 
 	// Call CreateTable with empty schema when no database is selected
 	table, err := data.CreateTable("", "Test_Table")
-	assert.Error(t, err)
-	assert.Nil(t, table)
-	assert.EqualError(t, err, "no database selected")
+	require.Error(t, err)
+	require.Nil(t, table)
+	require.EqualError(t, err, "no database selected")
 
 	// we make sure that all expectations were met
-	assert.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
+	require.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
 }
 
 func TestCreateViewWithEmptySchemaOk(t *testing.T) {
-	data, mock, err := getMockData()
-	assert.NoError(t, err, "an error was not expected when opening a stub database connection")
+	t.Parallel()
 
-	defer data.Close()
+	data, mock, err := getMockData()
+	require.NoError(t, err, "an error was not expected when opening a stub database connection")
+
+	defer func() { _ = data.Close() }()
 
 	// Mock the DATABASE() query that should be called when schema is empty
 	databaseRows := sqlmock.NewRows([]string{"DATABASE()"}).
@@ -458,16 +486,18 @@ func TestCreateViewWithEmptySchemaOk(t *testing.T) {
 
 	// Call CreateTable with empty schema (simulating empty DBName)
 	table, err := data.CreateTable("", "Test_View")
-	assert.NoError(t, err)
-	assert.NotNil(t, table)
-	assert.Equal(t, "Test_View", table.Name)
-	assert.True(t, table.IsView)
+	require.NoError(t, err)
+	require.NotNil(t, table)
+	require.Equal(t, "Test_View", table.Name)
+	require.True(t, table.IsView)
 
 	// we make sure that all expectations were met
-	assert.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
+	require.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
 }
 
 func TestDumpWithEmptyDBName(t *testing.T) {
+	t.Parallel()
+
 	var buf bytes.Buffer
 
 	data := &mysqldump.Data{
@@ -477,9 +507,9 @@ func TestDumpWithEmptyDBName(t *testing.T) {
 	}
 
 	db, mock, err := sqlmock.New()
-	assert.NoError(t, err, "an error was not expected when opening a stub database connection")
+	require.NoError(t, err, "an error was not expected when opening a stub database connection")
 
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	data.Connection = db
 
@@ -514,14 +544,14 @@ func TestDumpWithEmptyDBName(t *testing.T) {
 
 	mock.ExpectRollback()
 
-	assert.NoError(t, data.Dump(), "an error was not expected when dumping with empty DBName")
+	require.NoError(t, data.Dump(), "an error was not expected when dumping with empty DBName")
 
 	// Verify the output doesn't contain DROP DATABASE / CREATE DATABASE statements
 	result := buf.String()
-	assert.NotContains(t, result, "DROP DATABASE")
-	assert.NotContains(t, result, "CREATE DATABASE")
-	assert.Contains(t, result, "DROP TABLE IF EXISTS `Test_Table`")
+	require.NotContains(t, result, "DROP DATABASE")
+	require.NotContains(t, result, "CREATE DATABASE")
+	require.Contains(t, result, "DROP TABLE IF EXISTS `Test_Table`")
 
 	// we make sure that all expectations were met
-	assert.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
+	require.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
 }

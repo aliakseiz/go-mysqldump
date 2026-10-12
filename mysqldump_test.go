@@ -1,4 +1,4 @@
-// nolint:lll
+//nolint:lll // SQL expectations are long
 package mysqldump_test
 
 import (
@@ -9,7 +9,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/aliakseiz/go-mysqldump"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const expectedTable = `--
@@ -83,11 +83,13 @@ const expectedFooter = `
 
 `
 
-func RunDump(t testing.TB, data *mysqldump.Data) {
-	db, mock, err := sqlmock.New()
-	assert.NoError(t, err, "an error was not expected when opening a stub database connection")
+func RunDump(tb testing.TB, data *mysqldump.Data) {
+	tb.Helper()
 
-	defer db.Close()
+	db, mock, err := sqlmock.New()
+	require.NoError(tb, err, "an error was not expected when opening a stub database connection")
+
+	defer func() { _ = db.Close() }()
 
 	data.Connection = db
 	showTablesRows := sqlmock.NewRows([]string{"Tables_in_Testdb"}).
@@ -132,10 +134,12 @@ func RunDump(t testing.TB, data *mysqldump.Data) {
 
 	mock.ExpectRollback()
 
-	assert.NoError(t, data.Dump(), "an error was not expected when dumping a stub database connection")
+	require.NoError(tb, data.Dump(), "an error was not expected when dumping a stub database connection")
 }
 
 func TestDumpOk(t *testing.T) {
+	t.Parallel()
+
 	var buf bytes.Buffer
 
 	RunDump(t, &mysqldump.Data{
@@ -146,10 +150,12 @@ func TestDumpOk(t *testing.T) {
 	result := strings.ReplaceAll(strings.Split(buf.String(), "-- Dump completed")[0], "`", "~")
 
 	expectedResult := expectedHeader + expectedTable + expectedView + expectedFooter
-	assert.Equal(t, expectedResult, result)
+	require.Equal(t, expectedResult, result)
 }
 
 func TestNoLockOk(t *testing.T) {
+	t.Parallel()
+
 	var buf bytes.Buffer
 
 	data := &mysqldump.Data{
@@ -158,9 +164,9 @@ func TestNoLockOk(t *testing.T) {
 	}
 
 	db, mock, err := sqlmock.New()
-	assert.NoError(t, err, "an error was not expected when opening a stub database connection")
+	require.NoError(t, err, "an error was not expected when opening a stub database connection")
 
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	data.Connection = db
 	showTablesRows := sqlmock.NewRows([]string{"Tables_in_Testdb"}).
@@ -201,12 +207,12 @@ func TestNoLockOk(t *testing.T) {
 	mock.ExpectQuery("^SHOW CREATE VIEW `Test_View`$").WillReturnRows(createViewRows)
 	mock.ExpectRollback()
 
-	assert.NoError(t, data.Dump(), "an error was not expected when dumping a stub database connection")
+	require.NoError(t, data.Dump(), "an error was not expected when dumping a stub database connection")
 
 	result := strings.ReplaceAll(strings.Split(buf.String(), "-- Dump completed")[0], "`", "~")
 
 	expectedResult := expectedHeader + expectedTable + expectedView + expectedFooter
-	assert.Equal(t, expectedResult, result)
+	require.Equal(t, expectedResult, result)
 }
 
 func BenchmarkDump(b *testing.B) {
@@ -215,7 +221,7 @@ func BenchmarkDump(b *testing.B) {
 		LockTables: true,
 	}
 
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		RunDump(b, data)
 	}
 }
