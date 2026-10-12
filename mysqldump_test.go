@@ -1,227 +1,203 @@
-//nolint:lll // SQL expectations are long
 package mysqldump_test
 
 import (
 	"bytes"
+	"errors"
 	"io"
-	"strings"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"testing"
 
-	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/aliakseiz/go-mysqldump/v2"
 	"github.com/stretchr/testify/require"
 )
 
-const expectedTable = `--
--- Table structure for table ~Test_Table~
---
+var errClose = errors.New("close failed")
 
+// closeRecorder is a writer with a Close method that records the call.
+type closeRecorder struct {
+	bytes.Buffer
 
-DROP TABLE IF EXISTS ~Test_Table~;
-
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
- SET character_set_client = utf8mb4 ;
-CREATE TABLE 'Test_Table' (~id~ int(11) NOT NULL AUTO_INCREMENT,~email~ char(60) DEFAULT NULL, ~name~ char(60), PRIMARY KEY (~id~))ENGINE=InnoDB DEFAULT CHARSET=latin1;
-/*!40101 SET character_set_client = @saved_cs_client */;
-
-
---
--- Dumping data for table ~Test_Table~
---
-
-LOCK TABLES ~Test_Table~ WRITE;
-/*!40000 ALTER TABLE ~Test_Table~ DISABLE KEYS */;
-INSERT INTO ~Test_Table~ VALUES ('1',NULL,'Test Name 1'),('2','test2@test.de','Test Name 2');
-/*!40000 ALTER TABLE ~Test_Table~ ENABLE KEYS */;
-UNLOCK TABLES;
-
-`
-
-const expectedView = `
---
--- Table structure for table ~Test_View~
---
-
-
-DROP VIEW IF EXISTS ~Test_View~;
-
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
- SET character_set_client = utf8mb4 ;
-CREATE VIEW 'Test_View' AS SELECT ~id~, ~email~, ~name~ FROM 'Test_Table';
-/*!40101 SET character_set_client = @saved_cs_client */;
-
-`
-
-const expectedHeader = `-- Go SQL Dump ` + mysqldump.Version + `
---
--- ------------------------------------------------------
--- Server version	test_version
-
-/*!40101 SET @OLD_CHARACTER_SET_CLIENT=@@CHARACTER_SET_CLIENT */;
-/*!40101 SET @OLD_CHARACTER_SET_RESULTS=@@CHARACTER_SET_RESULTS */;
-/*!40101 SET @OLD_COLLATION_CONNECTION=@@COLLATION_CONNECTION */;
- SET NAMES utf8mb4 ;
-/*!40103 SET @OLD_TIME_ZONE=@@TIME_ZONE */;
-/*!40103 SET TIME_ZONE='+00:00' */;
-/*!40014 SET @OLD_UNIQUE_CHECKS=@@UNIQUE_CHECKS, UNIQUE_CHECKS=0 */;
-/*!40014 SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0 */;
-/*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;
-/*!40111 SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;
-
-`
-
-const expectedFooter = `
-/*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
-
-/*!40101 SET SQL_MODE=@OLD_SQL_MODE */;
-/*!40014 SET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS */;
-/*!40014 SET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS */;
-/*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;
-/*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;
-/*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
-/*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
-
-`
-
-func RunDump(tb testing.TB, data *mysqldump.Data) {
-	tb.Helper()
-
-	db, mock, err := sqlmock.New()
-	require.NoError(tb, err, "an error was not expected when opening a stub database connection")
-
-	defer func() { _ = db.Close() }()
-
-	data.Connection = db
-	showTablesRows := sqlmock.NewRows([]string{"Tables_in_Testdb"}).
-		AddRow("Test_Table").
-		AddRow("Test_View")
-
-	serverVersionRows := sqlmock.NewRows([]string{"Version()"}).
-		AddRow("test_version")
-
-	createTableRows := sqlmock.NewRows([]string{"Table", "Create Table"}).
-		AddRow("Test_Table", "CREATE TABLE 'Test_Table' (`id` int(11) NOT NULL AUTO_INCREMENT,`email` char(60) DEFAULT NULL, `name` char(60), PRIMARY KEY (`id`))ENGINE=InnoDB DEFAULT CHARSET=latin1")
-
-	createTableValueRows := sqlmock.NewRows([]string{"id", "email", "name"}).
-		AddRow(1, nil, "Test Name 1").
-		AddRow(2, "test2@test.de", "Test Name 2")
-
-	createViewRows := sqlmock.NewRows([]string{"View", "Create View"}).
-		AddRow("Test_View", "CREATE VIEW 'Test_View' AS SELECT `id`, `email`, `name` FROM 'Test_Table'")
-
-	databaseRows := sqlmock.NewRows([]string{"DATABASE()"}).
-		AddRow("test_db")
-
-	mock.ExpectBegin()
-
-	mock.ExpectQuery(`^SELECT version\(\)$`).WillReturnRows(serverVersionRows)
-	mock.ExpectQuery(`^SHOW TABLES$`).WillReturnRows(showTablesRows)
-	mock.ExpectExec("^LOCK TABLES `Test_Table` READ /\\*!32311 LOCAL \\*/,`Test_View` READ /\\*!32311 LOCAL \\*/$").WillReturnResult(sqlmock.NewResult(1, 1))
-
-	// Expect DATABASE() query for Test_Table
-	mock.ExpectQuery("^SELECT DATABASE\\(\\)$").WillReturnRows(databaseRows)
-	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_schema = \? AND table_name = \?`).WithArgs("test_db", "Test_Table").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
-	mock.ExpectQuery("^SHOW CREATE TABLE `Test_Table`$").WillReturnRows(createTableRows)
-	mock.ExpectQuery("^SELECT (.+) FROM `Test_Table`$").WillReturnRows(createTableValueRows)
-
-	// Expect DATABASE() query for Test_View
-	databaseRows2 := sqlmock.NewRows([]string{"DATABASE()"}).
-		AddRow("test_db")
-	mock.ExpectQuery("^SELECT DATABASE\\(\\)$").WillReturnRows(databaseRows2)
-	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_schema = \? AND table_name = \?`).WithArgs("test_db", "Test_View").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("VIEW"))
-	mock.ExpectQuery("^SHOW CREATE VIEW `Test_View`$").WillReturnRows(createViewRows)
-	mock.ExpectQuery("^SELECT (.+) FROM `Test_View`$").WillReturnRows(createTableValueRows)
-
-	mock.ExpectRollback()
-
-	require.NoError(tb, data.Dump(tb.Context()), "an error was not expected when dumping a stub database connection")
+	closed bool
+	err    error
 }
 
-func TestDumpOk(t *testing.T) {
+func (c *closeRecorder) Close() error {
+	c.closed = true
+
+	return c.err
+}
+
+func TestRegister(t *testing.T) {
 	t.Parallel()
 
-	var buf bytes.Buffer
+	t.Run("directory missing", func(t *testing.T) {
+		t.Parallel()
 
-	RunDump(t, &mysqldump.Data{
-		Out:        &buf,
-		LockTables: true,
+		db, _ := newMockDB(t)
+
+		data, err := mysqldump.Register(db, filepath.Join(t.TempDir(), "missing"), "dump", "")
+
+		require.ErrorContains(t, err, "invalid directory")
+		require.Nil(t, data)
 	})
 
-	result := strings.ReplaceAll(strings.Split(buf.String(), "-- Dump completed")[0], "`", "~")
+	t.Run("directory is a file", func(t *testing.T) {
+		t.Parallel()
 
-	expectedResult := expectedHeader + expectedTable + expectedView + expectedFooter
-	require.Equal(t, expectedResult, result)
+		db, _ := newMockDB(t)
+
+		file := filepath.Join(t.TempDir(), "file")
+		require.NoError(t, os.WriteFile(file, nil, 0o600))
+
+		data, err := mysqldump.Register(db, file, "dump", "")
+
+		require.ErrorContains(t, err, "invalid directory")
+		require.Nil(t, data)
+	})
+
+	t.Run("dump already exists", func(t *testing.T) {
+		t.Parallel()
+
+		db, _ := newMockDB(t)
+
+		dir := t.TempDir()
+		existing := filepath.Join(dir, "dump.sql")
+		require.NoError(t, os.WriteFile(existing, []byte("keep"), 0o600))
+
+		data, err := mysqldump.Register(db, dir, "dump", "")
+
+		require.ErrorContains(t, err, "dump already exists")
+		require.Nil(t, data)
+
+		content, err := os.ReadFile(existing) //nolint:gosec // path built from t.TempDir
+		require.NoError(t, err)
+		require.Equal(t, "keep", string(content), "the existing dump must not be overwritten")
+	})
+
+	t.Run("file cannot be created", func(t *testing.T) {
+		t.Parallel()
+
+		db, _ := newMockDB(t)
+
+		data, err := mysqldump.Register(db, t.TempDir(), "missing/dump", "")
+
+		require.ErrorIs(t, err, fs.ErrNotExist)
+		require.ErrorContains(t, err, "create dump file")
+		require.Nil(t, data)
+	})
+
+	t.Run("dump file created", func(t *testing.T) {
+		t.Parallel()
+
+		db, mock := newMockDB(t)
+		mock.ExpectClose()
+
+		dir := t.TempDir()
+
+		data, err := mysqldump.Register(db, dir, "dump", "app_db")
+		require.NoError(t, err)
+
+		require.FileExists(t, filepath.Join(dir, "dump.sql"))
+		require.Same(t, db, data.Connection)
+		require.Equal(t, "app_db", data.DBName)
+		require.IsType(t, &os.File{}, data.Out)
+
+		require.NoError(t, data.Close())
+	})
 }
 
-func TestNoLockOk(t *testing.T) {
+func TestDump(t *testing.T) {
 	t.Parallel()
+
+	db, mock := newMockDB(t)
+	expectDumpBody(mock, dumpOpts{specs: []tableSpec{fixtureTable}})
 
 	var buf bytes.Buffer
 
-	data := &mysqldump.Data{
-		Out:        &buf,
-		LockTables: false,
-	}
+	require.NoError(t, mysqldump.Dump(t.Context(), db, &buf))
+	require.NoError(t, mock.ExpectationsWereMet(), "there were unfulfilled conditions")
 
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err, "an error was not expected when opening a stub database connection")
-
-	defer func() { _ = db.Close() }()
-
-	data.Connection = db
-	showTablesRows := sqlmock.NewRows([]string{"Tables_in_Testdb"}).
-		AddRow("Test_Table").
-		AddRow("Test_View")
-
-	serverVersionRows := sqlmock.NewRows([]string{"Version()"}).
-		AddRow("test_version")
-
-	createTableRows := sqlmock.NewRows([]string{"Table", "Create Table"}).
-		AddRow("Test_Table", "CREATE TABLE 'Test_Table' (`id` int(11) NOT NULL AUTO_INCREMENT,`email` char(60) DEFAULT NULL, `name` char(60), PRIMARY KEY (`id`))ENGINE=InnoDB DEFAULT CHARSET=latin1")
-
-	createTableValueRows := sqlmock.NewRows([]string{"id", "email", "name"}).
-		AddRow(1, nil, "Test Name 1").
-		AddRow(2, "test2@test.de", "Test Name 2")
-
-	createViewRows := sqlmock.NewRows([]string{"View", "Create View"}).
-		AddRow("Test_View", "CREATE VIEW 'Test_View' AS SELECT `id`, `email`, `name` FROM 'Test_Table'")
-
-	databaseRows := sqlmock.NewRows([]string{"DATABASE()"}).
-		AddRow("test_db")
-
-	mock.ExpectBegin()
-	mock.ExpectQuery(`^SELECT version\(\)$`).WillReturnRows(serverVersionRows)
-	mock.ExpectQuery(`^SHOW TABLES$`).WillReturnRows(showTablesRows)
-
-	// Expect DATABASE() query for Test_Table
-	mock.ExpectQuery("^SELECT DATABASE\\(\\)$").WillReturnRows(databaseRows)
-	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_schema = \? AND table_name = \?`).WithArgs("test_db", "Test_Table").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("BASE TABLE"))
-	mock.ExpectQuery("^SHOW CREATE TABLE `Test_Table`$").WillReturnRows(createTableRows)
-	mock.ExpectQuery("^SELECT (.+) FROM `Test_Table`$").WillReturnRows(createTableValueRows)
-
-	// Expect DATABASE() query for Test_View
-	databaseRows2 := sqlmock.NewRows([]string{"DATABASE()"}).
-		AddRow("test_db")
-	mock.ExpectQuery("^SELECT DATABASE\\(\\)$").WillReturnRows(databaseRows2)
-	mock.ExpectQuery(`SELECT table_type FROM information_schema.tables WHERE table_schema = \? AND table_name = \?`).WithArgs("test_db", "Test_View").WillReturnRows(sqlmock.NewRows([]string{"table_type"}).AddRow("VIEW"))
-	mock.ExpectQuery("^SHOW CREATE VIEW `Test_View`$").WillReturnRows(createViewRows)
-	mock.ExpectRollback()
-
-	require.NoError(t, data.Dump(t.Context()), "an error was not expected when dumping a stub database connection")
-
-	result := strings.ReplaceAll(strings.Split(buf.String(), "-- Dump completed")[0], "`", "~")
-
-	expectedResult := expectedHeader + expectedTable + expectedView + expectedFooter
-	require.Equal(t, expectedResult, result)
+	want := dumpOpts{specs: []tableSpec{fixtureTable}}.wantOutput()
+	require.Equal(t, want, dumpText(t, buf.String()))
 }
 
-func BenchmarkDump(b *testing.B) {
-	data := &mysqldump.Data{
-		Out:        io.Discard,
-		LockTables: true,
+func TestData_Close(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		out     io.Writer
+		connErr error
+		wantIs  []error
+		wantMsg string
+	}{
+		{
+			name: "closes the out stream and the connection",
+			out:  &closeRecorder{},
+		},
+		{
+			name: "out stream without a Close method",
+			out:  &bytes.Buffer{},
+		},
+		{
+			name:   "out stream close error",
+			out:    &closeRecorder{err: errClose},
+			wantIs: []error{errClose}, wantMsg: "close out stream",
+		},
+		{
+			name:    "connection close error",
+			out:     &closeRecorder{},
+			connErr: errBoom,
+			wantIs:  []error{errBoom}, wantMsg: "close connection",
+		},
+		{
+			name:    "both close errors are reported",
+			out:     &closeRecorder{err: errClose},
+			connErr: errBoom,
+			wantIs:  []error{errClose, errBoom},
+		},
 	}
 
-	for range b.N {
-		RunDump(b, data)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			db, mock := newMockDB(t)
+
+			closeExpectation := mock.ExpectClose()
+			if tt.connErr != nil {
+				closeExpectation.WillReturnError(tt.connErr)
+			}
+
+			data := &mysqldump.Data{Out: tt.out, Connection: db}
+
+			err := data.Close()
+
+			if recorder, ok := tt.out.(*closeRecorder); ok {
+				require.True(t, recorder.closed, "the out stream must be closed")
+			}
+
+			require.Nil(t, data.Connection)
+			require.Nil(t, data.Out)
+			require.NoError(t, mock.ExpectationsWereMet(), "the connection must be closed")
+
+			if len(tt.wantIs) == 0 {
+				require.NoError(t, err)
+
+				return
+			}
+
+			require.Error(t, err)
+
+			for _, want := range tt.wantIs {
+				require.ErrorIs(t, err, want)
+			}
+
+			if tt.wantMsg != "" {
+				require.ErrorContains(t, err, tt.wantMsg)
+			}
+		})
 	}
 }

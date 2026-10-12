@@ -2,7 +2,6 @@
 
 [![License][License-Image]][License-Url]
 [![Godoc][Godoc-Image]][Godoc-Url]
-[![ReportCard][ReportCard-Image]][ReportCard-Url]
 
 Create MySQL dumps without `mysqldump` dependency.
 

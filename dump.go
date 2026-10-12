@@ -66,7 +66,7 @@ type MetaData struct {
 
 const (
 	// Version of this plugin for easy reference.
-	Version = "0.5.1"
+	Version = "2.0.0"
 
 	defaultMaxAllowedPacket = 4194304
 )
@@ -142,10 +142,11 @@ const recreateTmpl = " " +
 const nullType = "NULL"
 
 var (
-	errUnexpectedTable = errors.New("returned table is not the same as requested table")
-	errDoubleInit      = errors.New("cannot init twice")
-	errNoColumns       = errors.New("no columns in table")
-	errNoDatabase      = errors.New("no database selected")
+	errUnexpectedTable   = errors.New("returned table is not the same as requested table")
+	errDoubleInit        = errors.New("cannot init twice")
+	errNoColumns         = errors.New("no columns in table")
+	errUnexpectedColumns = errors.New("create statement has fewer than two columns")
+	errNoDatabase        = errors.New("no database selected")
 )
 
 // Dump data using struct.
@@ -480,10 +481,7 @@ func (table *Table) NameEsc() string {
 
 // CreateSQL returns the CREATE statement of the table or view.
 func (table *Table) CreateSQL(ctx context.Context) (string, error) {
-	var (
-		nameReturn, createSQL sql.NullString
-		createSQLQuery        string
-	)
+	var createSQLQuery string
 
 	if table.IsView {
 		createSQLQuery = "SHOW CREATE VIEW " + table.NameEsc()
@@ -491,7 +489,44 @@ func (table *Table) CreateSQL(ctx context.Context) (string, error) {
 		createSQLQuery = "SHOW CREATE TABLE " + table.NameEsc()
 	}
 
-	err := table.data.tx.QueryRowContext(ctx, createSQLQuery).Scan(&nameReturn, &createSQL)
+	rows, err := table.data.tx.QueryContext(ctx, createSQLQuery)
+	if err != nil {
+		return "", fmt.Errorf("get create statement of table %s: %w", table.Name, err)
+	}
+
+	defer func() { _ = rows.Close() }()
+
+	columns, err := rows.Columns()
+	if err != nil {
+		return "", fmt.Errorf("get create statement columns of table %s: %w", table.Name, err)
+	}
+
+	// SHOW CREATE TABLE returns name and statement; SHOW CREATE VIEW appends the client character set and collation.
+	const minColumns = 2
+
+	if len(columns) < minColumns {
+		return "", fmt.Errorf("get create statement of table %s: %w", table.Name, errUnexpectedColumns)
+	}
+
+	var nameReturn, createSQL sql.NullString
+
+	targets := make([]any, len(columns))
+	targets[0], targets[1] = &nameReturn, &createSQL
+
+	for i := minColumns; i < len(targets); i++ {
+		targets[i] = new(sql.NullString)
+	}
+
+	if !rows.Next() {
+		err = rows.Err()
+		if err == nil {
+			err = sql.ErrNoRows
+		}
+
+		return "", fmt.Errorf("get create statement of table %s: %w", table.Name, err)
+	}
+
+	err = rows.Scan(targets...)
 	if err != nil {
 		return "", fmt.Errorf("get create statement of table %s: %w", table.Name, err)
 	}

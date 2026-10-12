@@ -177,7 +177,9 @@ linters:
       - linters:
           - dupl
           - forcetypeassert
+          - funlen
           - gochecknoglobals
+          - ireturn
         path: .*_test.go
       - linters:
           - goconst

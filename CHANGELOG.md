@@ -7,14 +7,18 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ## [Unreleased]
 
 ### Added
+- Unit, function and integration tests
 
 ### Changed
+- `Version` in the dump header from `0.5.1` to `2.0.0`
 
 ### Fixed
+- `SHOW CREATE VIEW` failure
 
 ### Deprecated
 
 ### Removed
+- Outdated tests
 
 ### Security
 
